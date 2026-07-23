@@ -95,6 +95,10 @@ export async function GET() {
   let jdTotal = 0, jdOpen = 0, headcountOpen = 0, ivPeople = 0
   let empTotal = 0, empIng = 0, empAttributed = 0, revSum = 0, profitSum = 0
   let finalPassedNotInEmp = 0
+  // 상세 명단 (운영 조치용)
+  const fpNotInEmpList: any[] = []
+  const revenueStatus: any[] = []
+  const revRowsUnmatched: string[] = []
   if (sheet) {
     const [mRes, oRes] = await Promise.all([
       sheet.spreadsheets.values.batchGet({ spreadsheetId: MASTER, ranges: ["'JD EXECUTION'!A1:N", "'INTERVIEW'!A1:N"] }),
@@ -128,7 +132,7 @@ export async function GET() {
     if (hIdx >= 0) {
       const H = empRows[hIdx]
       const col = (re: RegExp) => H.findIndex((c: any) => re.test(String(c || '').replace(/\n/g, ' ').trim()))
-      const ci = { status: col(/^Status$/i), name: col(/^Name$/i), email: col(/^e-?mail$/i) }
+      const ci = { status: col(/^Status$/i), name: col(/^Name$/i), email: col(/^e-?mail$/i), company: col(/^Company$/i) }
       const byNameRev: Record<string, { rev: number; profit: number }> = {}
       const rIdx = revRows.findIndex((r: any[]) => r.some((c: any) => /기업명/.test(c || '')) && r.some((c: any) => /이름/.test(c || '')))
       if (rIdx >= 0) {
@@ -142,25 +146,44 @@ export async function GET() {
           byNameRev[nm] = { rev: num(r[rci.revenue]), profit: num(r[rci.profit]) }
         }
       }
+      const empNamesNorm = new Set<string>()
       for (const r of empRows.slice(hIdx + 1)) {
         const email = String(r[ci.email] || '').trim().toLowerCase()
         const name = String(r[ci.name] || '').trim()
         if (!name || !email.includes('@')) continue
         empTotal++
         empEmails.add(email)
+        empNamesNorm.add(name.toLowerCase().replace(/\s+/g, ' ').trim())
         const attributed = candEmails.has(email) || fyiEmails.has(email)
         if (attributed) {
           empAttributed++
           if (/^ing$/i.test(String(r[ci.status] || '').trim())) empIng++
           const m = byNameRev[name.toLowerCase().replace(/\s+/g, ' ').trim()]
           if (m) { revSum += m.rev; profitSum += m.profit }
+          revenueStatus.push({
+            name, email, company: String(r[ci.company] || '').trim(),
+            매출현황: !m ? '행 없음' : m.rev > 0 ? `기입됨 ($${m.rev})` : '행은 있으나 총 매출액 공란/0',
+          })
         }
+      }
+      // 매출현황에 있는데 Employee 이름과 매칭 안 되는 행 (오탈자 후보)
+      for (const nm of Object.keys(byNameRev)) {
+        if (!empNamesNorm.has(nm)) revRowsUnmatched.push(nm)
       }
     }
     // final_passed 인데 Employee 에 없는 인원 (23 vs 22 격차 원인)
-    const fp = await fetchAll<any>(ktc, 'candidates', 'email', q => q.eq('pipeline_status', 'final_passed'))
-    finalPassedNotInEmp = fp.filter(c => !empEmails.has(String(c.email || '').toLowerCase())).length
+    const fp = await fetchAll<any>(ktc, 'candidates', 'full_name, email, applied_company, applied_job, sheet_source', q => q.eq('pipeline_status', 'final_passed'))
+    for (const c of fp) {
+      if (!empEmails.has(String(c.email || '').toLowerCase())) {
+        finalPassedNotInEmp++
+        fpNotInEmpList.push({ name: c.full_name, email: c.email, company: c.applied_company, job: c.applied_job, channel: c.sheet_source })
+      }
+    }
   }
+
+  // 구 상태값 잔존 인원 명단
+  const legacyList = (await fetchAll<any>(ktc, 'candidates', 'full_name, email, sheet_source, applied_job, applied_company', q => q.eq('pipeline_status', 'ai_interview_passed')))
+    .map(c => ({ name: c.full_name, email: c.email, channel: c.sheet_source, job: c.applied_job, company: c.applied_company }))
 
   // ── 대조표 ──
   const f = Object.fromEntries(d.matching.funnel.map(s => [s.key, s.count]))
@@ -215,6 +238,12 @@ export async function GET() {
       fyiUniqApplicants: fyiUniq,
       finalPassedNotInEmployeeSheet: finalPassedNotInEmp,
       employeeTotal: empTotal,
+    },
+    details: {
+      입사했는데_Employee탭_미기입: fpNotInEmpList,
+      구상태값_ai_interview_passed_잔존: legacyList,
+      귀속입사자_매출현황_기입상태: revenueStatus,
+      매출현황에만_있고_Employee와_이름불일치: revRowsUnmatched,
     },
     checks,
   })
