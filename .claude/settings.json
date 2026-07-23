@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(*)"
+    ],
+    "deny": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git rebase:*)",
+      "Bash(git clean:*)",
+      "Bash(rm -rf:*)",
+      "Bash(rm -fr:*)",
+      "Bash(rm -r:*)",
+      "Bash(rm -R:*)",
+      "Bash(rm -f:*)",
+      "Bash(rm --recursive:*)",
+      "Bash(rm --force:*)",
+      "Bash(find:*-delete*)",
+      "Bash(find:*-exec rm*)",
+      "Bash(sudo:*)",
+      "Bash(chmod -R:*)",
+      "Bash(chown -R:*)",
+      "Bash(dd:*)",
+      "Bash(mkfs:*)",
+      "Bash(curl:*api*key*)",
+      "Bash(curl:*token*)",
+      "Bash(echo:*>>*.env*)",
+      "Bash(cat:*.env*)",
+      "Read(.env*)",
+      "Read(**/*secret*)",
+      "Read(**/*credential*)",
+      "Read(**/.ssh/**)",
+      "Read(**/id_rsa*)",
+      "Write(.env*)",
+      "Write(**/secrets/**)"
+    ]
+  }
+}
