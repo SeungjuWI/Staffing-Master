@@ -50,3 +50,19 @@ const CHANNEL_LABELS: Record<string, string> = {
   '(미상)': '채널 미상',
 }
 export const channelLabel = (key: string) => CHANNEL_LABELS[key] || key
+
+// 채널 성격 — 유료(게재비·광고 집행) / 자사(우리 플랫폼) / 무료(무료 게재)
+const CHANNEL_KIND: Record<string, 'paid' | 'own' | 'free'> = {
+  'ITviec-api': 'paid',
+  'top-dev': 'paid',
+  LinkedIn: 'paid',
+  FYI: 'own',
+  'landing-page': 'own',
+  'jobs-go': 'free',
+  'top-cv': 'free',
+  glint: 'free',
+  YBOX: 'free',
+  Vieclam24h: 'free',
+}
+export const CHANNEL_KIND_LABELS = { paid: '유료', own: '자사', free: '무료' } as const
+export const channelKind = (key: string): 'paid' | 'own' | 'free' | null => CHANNEL_KIND[key] ?? null

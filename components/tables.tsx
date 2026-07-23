@@ -1,5 +1,5 @@
 import type { Channel, CompanyPerf, JdRow } from '@/lib/types'
-import { channelLabel, fmtInt, fmtKrw, fmtUsd } from '@/lib/fmt'
+import { CHANNEL_KIND_LABELS, channelKind, channelLabel, fmtInt, fmtKrw, fmtUsd } from '@/lib/fmt'
 import { EmptyState, Meter } from './viz'
 
 export function ChannelTable({ channels }: { channels: Channel[] }) {
@@ -24,9 +24,14 @@ export function ChannelTable({ channels }: { channels: Channel[] }) {
           </tr>
         </thead>
         <tbody>
-          {channels.map(c => (
+          {channels.map(c => {
+            const kind = channelKind(c.key)
+            return (
             <tr key={c.key}>
-              <td className="tname">{channelLabel(c.key)}</td>
+              <td>
+                <span className="tname">{channelLabel(c.key)}</span>
+                {kind && <span className={`ck ${kind}`}>{CHANNEL_KIND_LABELS[kind]}</span>}
+              </td>
               <td title={c.applications ? `지원 ${fmtInt(c.applications)}건` : undefined}>{fmtInt(c.people)}</td>
               <td>{fmtInt(c.docPass)}</td>
               <td>{fmtInt(c.interviews)}</td>
@@ -35,7 +40,8 @@ export function ChannelTable({ channels }: { channels: Channel[] }) {
               <td>{c.cpaKrw != null ? fmtKrw(c.cpaKrw) : <span className="dim">–</span>}</td>
               <td>{c.costPerHireKrw != null ? fmtKrw(c.costPerHireKrw) : <span className="dim">–</span>}</td>
             </tr>
-          ))}
+            )
+          })}
         </tbody>
         <tfoot>
           <tr>

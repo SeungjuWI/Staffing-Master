@@ -75,12 +75,12 @@ export default async function Page({
       <div className="wrap">
         {data.mode === 'mock' && (
           <div className="banner">
-            ⚠ <b>데모 데이터</b> — 환경변수(.env.local)가 설정되지 않아 예시 수치를 표시하고 있습니다.
+            <b>데모 데이터</b> — 환경변수(.env.local)가 설정되지 않아 예시 수치를 표시하고 있습니다.
           </div>
         )}
         {data.warnings.map(w => (
           <div className="banner" key={w}>
-            ⚠ 일부 데이터 제외 — {w}
+            <b>일부 데이터 제외</b> — {w}
           </div>
         ))}
         {filtered && (
@@ -344,7 +344,10 @@ export default async function Page({
             <section className="section">
               <div className="section-head">
                 <h2>유입 채널별 성과·비용</h2>
-                <span className="sub">지원자 많은 순 — 지원자당 비용(CPA)과 채용당 비용으로 효율 비교</span>
+                <span className="sub">
+                  지원자 많은 순 · <span className="ck paid">유료</span> 게재비·광고 집행{' '}
+                  <span className="ck own">자사</span> 우리 플랫폼 <span className="ck free">무료</span> 무료 게재
+                </span>
               </div>
               <div className="card">
                 <ChannelTable channels={supply.channels} />
