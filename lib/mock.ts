@@ -56,8 +56,10 @@ export function mockData(): MasterData {
       ],
       openJds: 3,
       headcountTotal: 10,
+      hiresInOpen: 6,
       fillRateOpen: 0.6,
     },
+    vietnam: { jobsTotal: 6, jobsActive: 4, companies: 5, applications: 62, applicants: 48, viewed: 31 },
     outcome: {
       companies: [
         { company: 'FPT Korea', hires: 5, working: 5, revenueUsd: 46200, profitUsd: 15400 },

@@ -9,7 +9,15 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ko">
-      <body>{children}</body>
+      <body>
+        {/* Pretendard Variable — 한국어 대시보드 표준 UI 폰트 (실패 시 system-ui 폴백) */}
+        <link
+          rel="stylesheet"
+          precedence="default"
+          href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+        />
+        {children}
+      </body>
     </html>
   )
 }

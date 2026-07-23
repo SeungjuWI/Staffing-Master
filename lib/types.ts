@@ -48,6 +48,16 @@ export type CompanyPerf = {
   profitUsd: number
 }
 
+// 베트남 매칭 트랙 — FYI 플랫폼 안에서 직접 이뤄지는 매칭 (ktc-support 미경유)
+export type VietnamBlock = {
+  jobsTotal: number      // FYI 자체 공고 (기업 직접 등록, source=company_self)
+  jobsActive: number     // 활성 공고
+  companies: number      // 공고 등록 기업 수
+  applications: number   // 지원 건
+  applicants: number     // 지원자 (고유)
+  viewed: number         // 기업이 열람한 지원 건
+}
+
 export type MasterData = {
   generatedAt: string
   mode: 'live' | 'mock'
@@ -85,8 +95,11 @@ export type MasterData = {
     jds: JdRow[]
     openJds: number
     headcountTotal: number      // 오픈 공고 TO 합
+    hiresInOpen: number         // 오픈 공고에서 이미 채운 인원
     fillRateOpen: number | null // 오픈 공고 충원율
   }
+
+  vietnam: VietnamBlock
 
   outcome: {
     companies: CompanyPerf[]    // 기업별 입사/재직/매출 (파이프라인 경유 입사만)
