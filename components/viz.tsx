@@ -27,7 +27,7 @@ export function StatTile({
 
 const FUNNEL_COLORS = ['var(--f1)', 'var(--f2)', 'var(--f3)', 'var(--f4)', 'var(--f5)', 'var(--f6)']
 
-export function Funnel({ stages }: { stages: FunnelStage[] }) {
+export function Funnel({ stages, extra }: { stages: FunnelStage[]; extra?: string }) {
   const max = Math.max(1, ...stages.map(s => s.count))
   const first = stages[0]?.count || 0
   const last = stages[stages.length - 1]?.count || 0
@@ -63,6 +63,7 @@ export function Funnel({ stages }: { stages: FunnelStage[] }) {
       <div className="funnel-note">
         지원자 → 입사 전환율 <b>{first > 0 ? fmtPct(last / first, 2) : '–'}</b>
         {notes.length > 0 && <> · {notes.map(n => `${n.label}: ${n.note}`).join(' · ')}</>}
+        {extra && <> · {extra}</>}
       </div>
     </div>
   )

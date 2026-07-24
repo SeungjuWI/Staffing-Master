@@ -165,7 +165,14 @@ async function Dashboard({
                 </div>
               </div>
               <div className="hero-side">
-                <div className="kv">
+                <div
+                  className="kv"
+                  title={
+                    h.working + h.left !== h.hiresTotal
+                      ? `재직·이탈은 Ops 시트 귀속 입사자 ${fmtInt(h.working + h.left)}명 기준 — 입사(파이프라인 최종합격) ${fmtInt(h.hiresTotal)}명과의 차이는 파이프라인 상태 미갱신 인원`
+                      : undefined
+                  }
+                >
                   <div className="k">재직 중</div>
                   <div className="v">
                     {fmtInt(h.working)}명 <span className="dim">/ 이탈 {h.left}명</span>
@@ -192,16 +199,16 @@ async function Dashboard({
           <section className="section">
             <div className="section-head">
               <h2>트랙 × 스쿼드</h2>
-              <span className="sub">한국기업·베트남 로컬 두 트랙을 유입/인재/매칭 스쿼드 기준으로</span>
+              <span className="sub">한국기업·베트남 로컬 두 트랙 × 기업 유입 / 인재 유입 / 매칭 세 스쿼드</span>
             </div>
             <div className="matrix-scroll">
               <div className="matrix">
                 <div className="mhead" />
                 <div className="mhead">
-                  유입<span>기업 확보</span>
+                  기업 유입<span>기업 확보</span>
                 </div>
                 <div className="mhead">
-                  인재<span>지원 모집</span>
+                  인재 유입<span>지원 모집</span>
                 </div>
                 <div className="mhead">
                   매칭<span>채용 성사</span>
@@ -216,7 +223,7 @@ async function Dashboard({
                     <small>건 공고 수주</small>
                   </div>
                   <div className="sub">
-                    모집 중 {fmtInt(matching.openJds)}건 · 예정 {fmtInt(matching.headcountTotal)}명 중 {fmtInt(matching.hiresInOpen)}명 채움
+                    모집 중 {fmtInt(matching.openJds)}건 · 목표 {fmtInt(matching.headcountTotal)}명 중 {fmtInt(matching.hiresInOpen)}명 채움
                   </div>
                 </div>
                 <div className="mcell">
@@ -231,7 +238,20 @@ async function Dashboard({
                     {fmtInt(h.hiresTotal)}
                     <small>명 입사</small>
                   </div>
-                  <div className="sub">검토 중 {fmtInt(p.sentToCompany)} · 면접 {fmtInt(p.interviewing)} · 재직 {fmtInt(h.working)}</div>
+                  <div className="sub">
+                    {(() => {
+                      // 기업 전달 누적 대비 검토 체류가 절반 이상이면 적체 신호 (공고 '정체' 판정과 같은 어휘)
+                      const delivered = matching.funnel[2]?.count ?? 0
+                      const stuck = delivered > 0 && p.sentToCompany / delivered >= 0.5
+                      return stuck ? (
+                        <i
+                          className="jdot stall"
+                          title={`기업 전달 누적 ${fmtInt(delivered)}명 중 ${fmtInt(p.sentToCompany)}명이 아직 기업 검토 단계 — 처리 적체 신호`}
+                        />
+                      ) : null
+                    })()}
+                    지금 기업 검토 {fmtInt(p.sentToCompany)}명 · 면접 {fmtInt(p.interviewing)}명 · 재직 {fmtInt(h.working)}명
+                  </div>
                 </div>
 
                 <div className="mrow">
@@ -257,7 +277,8 @@ async function Dashboard({
                     <small>건 기업 열람</small>
                   </div>
                   <div className="sub">
-                    {v.applications > 0 ? `열람율 ${fmtPct(v.viewed / v.applications, 0)}` : '–'} · 채용 단계 연동 예정
+                    아직 성사 아님 — 기업이 지원서를 열어본 건수
+                    {v.applications > 0 && ` (열람율 ${fmtPct(v.viewed / v.applications, 0)})`} · 채용 확정 집계는 연동 예정
                   </div>
                 </div>
               </div>
@@ -272,7 +293,16 @@ async function Dashboard({
               </span>
             </div>
             <div className="card">
-              <Funnel stages={matching.funnel} />
+              <Funnel
+                stages={matching.funnel}
+                // 오퍼는 통과 즉시 입사로 상태 전환 — 지금 오퍼 진행자가 없으면 두 단계 수치가 같아져 100% 로 보인다
+                extra={
+                  p.offer === 0 &&
+                  matching.funnel.at(-2)?.count === matching.funnel.at(-1)?.count
+                    ? '오퍼·계약과 입사가 같은 것은 지금 오퍼 진행 중인 인원이 0명이기 때문 (오퍼는 수락 즉시 입사로 전환)'
+                    : undefined
+                }
+              />
             </div>
           </section>
         </>
