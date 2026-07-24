@@ -7,7 +7,7 @@ import { getMasterData, hasLiveEnv } from '@/lib/aggregate'
 
 export const dynamic = 'force-dynamic'
 
-const CLOSED_RE = /clos|done|drop|hold|중단|마감|완료|보류|종료/i
+const CLOSED_RE = /clos|cancel|done|drop|hold|중단|마감|완료|보류|종료|취소|드롭/i
 const SCREEN_SET = ['passed', 'ready_to_forward', 'sent_to_company', 'interviewing', 'offer', 'final_passed', 'ai_interview_sent', 'ai_interview_done', 'ai_interview_passed']
 const DELIVERED_SET = ['sent_to_company', 'interviewing', 'offer', 'final_passed']
 
@@ -110,9 +110,10 @@ export async function GET() {
     for (const r of jdRows.slice(3)) {
       if (!String(r[0] || '').trim()) continue
       jdTotal++
-      if (!CLOSED_RE.test(String(r[11] || '').trim())) {
+      // Job Status=J(9), Headcount=G(6) — aggregate.ts 와 동일한 실측 인덱스
+      if (!CLOSED_RE.test(String(r[9] || '').trim())) {
         jdOpen++
-        headcountOpen += parseInt(r[8]) || 0
+        headcountOpen += parseInt(r[6]) || 0
       }
     }
     const seen = new Set<string>()

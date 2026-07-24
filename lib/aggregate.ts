@@ -37,7 +37,7 @@ const INTERVIEW_REACHED = new Set(['interviewing', 'offer', 'final_passed'])
 const OFFER_REACHED = new Set(['offer', 'final_passed'])
 
 // JD EXECUTION status 가 이 패턴이면 마감으로 본다 (표기가 자유 텍스트)
-const CLOSED_RE = /clos|done|drop|hold|중단|마감|완료|보류|종료/i
+const CLOSED_RE = /clos|cancel|done|drop|hold|중단|마감|완료|보류|종료|취소|드롭/i
 
 const COST_CHANNEL_MAP: Record<string, string> = {
   topdev: 'top-dev', itviec: 'ITviec-api', ybox: 'YBOX',
@@ -534,12 +534,15 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     .map((r: any[]) => {
       const code = String(r[0]).trim()
       const agg = perJd[code] || { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0 }
-      const status = String(r[11] || '').trim()
+      // JD EXECUTION 헤더 실측: A(0)Job ID · B(1)Company · C(2)Job Title · G(6)Headcount ·
+      // I(8)Recruitment period · J(9)Job Status · L(11)FYI page. 상태=9, 인원=6 (이전 11/8 은
+      // FYI page·모집기간 열을 잘못 읽어 마감 공고가 계속 "진행 중"으로 남던 버그)
+      const status = String(r[9] || '').trim()
       return {
         code,
         company: String(r[1] || '').trim(),
         title: String(r[2] || '').trim(),
-        headcount: parseInt(r[8]) || null,
+        headcount: parseInt(r[6]) || null,
         status,
         open: !CLOSED_RE.test(status),
         apps: agg.apps, people: agg.people, docPass: agg.docPass,
