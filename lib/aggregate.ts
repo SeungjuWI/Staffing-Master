@@ -660,13 +660,18 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   }
 }
 
-// ── 캐시 (30분) — Vercel Data Cache 에 저장해 콜드 서버리스 인스턴스끼리 공유한다.
+// ── 캐시 — Vercel Data Cache 에 저장해 콜드 서버리스 인스턴스끼리 공유한다.
 // 기존 인메모리 캐시는 인스턴스마다 비어 있어서, 오래 안 열어본 뒤 접속(scale-to-zero
 // 콜드)마다 전 소스를 다시 읽어 수 초씩 걸렸다. Data Cache 는 인스턴스 경계를 넘어
-// 유지되고, 만료(30분) 후에도 stale 을 즉시 돌려주고 백그라운드로 갱신(SWR)한다.
+// 유지되고(배포해도 유지됨), 만료 후에도 stale 을 즉시 돌려주고 백그라운드로 갱신(SWR)한다.
 // 원본(Raw)이 아니라 집계 결과(MasterData)를 담는다 — 훨씬 작아 Data Cache 항목
 // 크기 한도(2MB)에 안전. 기간 3종을 한 번의 fetchRaw 로 계산해 함께 캐시한다.
-const TTL_SECONDS = 30 * 60
+//
+// revalidate = 60초: SWR 라 응답 속도는 그대로 빠르면서, 시트에서 공고를 마감하면
+// 일반 접속도 ~1분 안에 반영된다(즉시 보려면 상단 새로고침=?fresh=1 이 캐시 우회 라이브).
+// 집계 로직을 바꿀 때는 캐시 키 버전(v2)을 올려 옛 스냅샷을 폐기할 것 — Data Cache 는
+// 배포로 자동 비워지지 않으므로, 안 올리면 옛 결과가 revalidate 창만큼 남는다.
+const TTL_SECONDS = 60
 
 const getCachedByPeriod = unstable_cache(
   async (): Promise<Record<Period, MasterData>> => {
@@ -678,7 +683,7 @@ const getCachedByPeriod = unstable_cache(
       '30d': computeFromRaw(raw, '30d', at),
     }
   },
-  ['staffing-master-data-v1'],
+  ['staffing-master-data-v2'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 
