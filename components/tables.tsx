@@ -2,12 +2,92 @@ import type { Channel, CompanyPerf, JdHealth, JdRow } from '@/lib/types'
 import { CHANNEL_KIND_LABELS, channelKind, channelLabel, fmtDay, fmtInt, fmtKrw, fmtUsd } from '@/lib/fmt'
 import { EmptyState, Meter } from './viz'
 
+// ── 채널 판정 어휘 — "뭐가 성과 좋고 나쁜지"의 즉답. 공고 판정(JdHealth)과 같은 점 어휘를 쓴다.
+//  성과   입사를 만들었고 비용도 정상 범위 (무비용 포함)
+//  고비용 입사는 있지만 채용당 비용이 전체 평균의 3배 이상
+//  점검   돈을 쓰는데 입사가 아직 0명 — 집행 지속 여부 판단 필요
+//  관망   지출 없는 채널에서 입사 0명 — 잃는 것은 없음
+// 비용 시트에는 시간 축이 없어 기간 보기에서는 판정하지 않는다 (비용 열과 동일 원칙).
+type ChannelHealth = 'good' | 'pricey' | 'burn' | 'idle'
+const CH_ORDER: ChannelHealth[] = ['good', 'pricey', 'burn', 'idle']
+export const CHANNEL_HEALTH_META: Record<ChannelHealth, { label: string; dot: string; desc: string }> = {
+  good: { label: '성과', dot: 'good', desc: '입사를 만들어낸 채널 — 채용당 비용도 전체 평균의 3배 미만 (무비용 채널 포함)' },
+  pricey: { label: '고비용', dot: 'stall', desc: '입사는 있지만 채용당 비용이 전체 평균의 3배 이상 — 단가 협상 또는 집행 축소 검토' },
+  burn: { label: '점검', dot: 'low', desc: '지출은 있는데 입사가 아직 0명 — 집행을 계속할지 점검 필요' },
+  idle: { label: '관망', dot: 'early', desc: '지출 없는 채널, 입사 아직 0명 — 비용 부담 없이 지원자만 유입되는 중' },
+}
+
+// 전체 평균 채용당 비용 = 총지출 ÷ 총입사 (헤드라인과 같은 전 채널 기준)
+function avgCostPerHire(channels: Channel[]): number | null {
+  const spend = channels.some(c => c.spendKrw != null) ? channels.reduce((s, c) => s + (c.spendKrw || 0), 0) : null
+  const hires = channels.reduce((s, c) => s + c.hires, 0)
+  return spend != null && hires > 0 ? spend / hires : null
+}
+
+function channelHealth(c: Channel, avg: number | null): ChannelHealth {
+  if (c.hires > 0)
+    return avg != null && c.costPerHireKrw != null && c.costPerHireKrw >= avg * 3 ? 'pricey' : 'good'
+  return (c.spendKrw ?? 0) > 0 ? 'burn' : 'idle'
+}
+
+// 판정 이유 한 줄 — 호버 툴팁 (해당 채널의 실제 숫자로)
+function channelNote(c: Channel, h: ChannelHealth, avg: number | null): string {
+  if (h === 'good') return c.costPerHireKrw != null ? `입사 ${fmtInt(c.hires)}명 · 채용당 ${fmtKrw(c.costPerHireKrw)}` : `입사 ${fmtInt(c.hires)}명 · 지출 없음`
+  if (h === 'pricey')
+    return `채용당 ${fmtKrw(c.costPerHireKrw)} — 전체 평균 ${fmtKrw(avg)}의 ${fmtInt(Math.round((c.costPerHireKrw || 0) / (avg || 1)))}배, 집행 단가 재검토 필요`
+  if (h === 'burn') return `지출 ${fmtKrw(c.spendKrw)}을 썼는데 입사 아직 0명 — 집행을 계속할지 점검 필요`
+  return `비용 없이 지원자 ${fmtInt(c.people)}명 유입 — 입사는 아직 0명 (잃는 것 없음)`
+}
+
+// 유료/자사/무료 분류가 있는 채널 = 지금 운영하는 채널. 분류 없는 경로(구 시트·구글폼·채널 미상 등)는
+// 본표에 남기되 맨 아래 '과거' 칩 + 흐린 이름으로 구분하고 판정에서 제외한다 (접힘 격리는 퇴짜).
+const isActiveChannel = (c: Channel) => channelKind(c.key) != null
+
+// 섹션 헤드용 판정 요약 칩 — 기준 설명 툴팁 겸 범례 (기간 보기에서는 비용이 없어 렌더하지 않음)
+export function ChannelHealthSummary({ channels }: { channels: Channel[] }) {
+  const active = channels.filter(isActiveChannel)
+  if (!active.some(c => c.spendKrw != null)) return null
+  const avg = avgCostPerHire(channels)
+  return (
+    <span className="hsum">
+      {CH_ORDER.map(h => {
+        const n = active.filter(c => channelHealth(c, avg) === h).length
+        return (
+          <span key={h} className={n > 0 ? 'hs' : 'hs zero'}>
+            <i className={`jdot ${CHANNEL_HEALTH_META[h].dot}`} />
+            {CHANNEL_HEALTH_META[h].label} <b>{fmtInt(n)}</b>
+            <span className="tip" role="tooltip">{CHANNEL_HEALTH_META[h].desc}</span>
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
 export function ChannelTable({ channels }: { channels: Channel[] }) {
   if (!channels.length) return <EmptyState message="이 기간에 유입된 지원 데이터가 없습니다." />
-  const sum = (f: (c: Channel) => number) => channels.reduce((s, c) => s + f(c), 0)
-  const totalSpend = channels.some(c => c.spendKrw != null) ? sum(c => c.spendKrw || 0) : null
-  const totalPeople = sum(c => c.people)
-  const totalHires = sum(c => c.hires)
+  const sum = (list: Channel[], f: (c: Channel) => number) => list.reduce((s, c) => s + f(c), 0)
+  // 합계는 전 채널 (과거·기타 포함) — 인재풀 타일의 지원자 수와 일치해야 한다
+  const totalSpend = channels.some(c => c.spendKrw != null) ? sum(channels, c => c.spendKrw || 0) : null
+  const totalPeople = sum(channels, c => c.people)
+  const totalHires = sum(channels, c => c.hires)
+  const avg = avgCostPerHire(channels)
+  const judged = channels.some(c => c.spendKrw != null) // 기간 보기(비용 없음)에서는 판정 점 생략
+
+  // 0은 흐리게 — 성과가 난 칸만 또렷이 남는다
+  const num = (n: number) => (n === 0 ? <span className="dim">0</span> : fmtInt(n))
+
+  const active = channels
+    .filter(isActiveChannel)
+    .sort((a, b) => {
+      if (judged) {
+        const d = CH_ORDER.indexOf(channelHealth(a, avg)) - CH_ORDER.indexOf(channelHealth(b, avg))
+        if (d !== 0) return d
+      }
+      return b.hires - a.hires || b.people - a.people
+    })
+  const etc = channels.filter(c => !isActiveChannel(c)).sort((a, b) => b.people - a.people)
+
   return (
     <div className="tbl-scroll">
       <table>
@@ -24,22 +104,40 @@ export function ChannelTable({ channels }: { channels: Channel[] }) {
           </tr>
         </thead>
         <tbody>
-          {channels.map(c => {
+          {[...active, ...etc].map(c => {
+            const legacy = !isActiveChannel(c)
             const kind = channelKind(c.key)
+            const h = !legacy && judged ? channelHealth(c, avg) : null
+            // 성과는 툴팁 없음 (숫자 열이 이미 설명) — 문제 채널(고비용·점검·관망)만 호버로 판정 이유 노출 (공고 표와 동일)
+            const note = h && h !== 'good' ? channelNote(c, h, avg) : null
             return (
-            <tr key={c.key}>
-              <td>
-                <span className="tname">{channelLabel(c.key)}</span>
-                {kind && <span className={`ck ${kind}`}>{CHANNEL_KIND_LABELS[kind]}</span>}
-              </td>
-              <td title={c.applications ? `지원 ${fmtInt(c.applications)}건` : undefined}>{fmtInt(c.people)}</td>
-              <td>{fmtInt(c.docPass)}</td>
-              <td>{fmtInt(c.interviews)}</td>
-              <td>{fmtInt(c.hires)}</td>
-              <td>{c.spendKrw != null ? fmtKrw(c.spendKrw) : <span className="dim">–</span>}</td>
-              <td>{c.cpaKrw != null ? fmtKrw(c.cpaKrw) : <span className="dim">–</span>}</td>
-              <td>{c.costPerHireKrw != null ? fmtKrw(c.costPerHireKrw) : <span className="dim">–</span>}</td>
-            </tr>
+              <tr key={c.key}>
+                <td className={note ? 'jdcell' : undefined}>
+                  {h && (
+                    <i
+                      className={`jdot ${CHANNEL_HEALTH_META[h].dot}`}
+                      title={note ? undefined : `${CHANNEL_HEALTH_META[h].label} — ${channelNote(c, h, avg)}`}
+                    />
+                  )}
+                  <span className={legacy ? 'tname dim' : 'tname'} title={legacy ? '지금은 쓰지 않는 유입 경로 — 판정 제외' : undefined}>
+                    {channelLabel(c.key)}
+                  </span>
+                  {kind && <span className={`ck ${kind}`}>{CHANNEL_KIND_LABELS[kind]}</span>}
+                  {legacy && <span className="ck past">과거</span>}
+                  {note && h && (
+                    <span className="tip" role="tooltip">
+                      <b>{CHANNEL_HEALTH_META[h].label}</b> — {note}
+                    </span>
+                  )}
+                </td>
+                <td title={c.applications ? `지원 ${fmtInt(c.applications)}건` : undefined}>{num(c.people)}</td>
+                <td>{num(c.docPass)}</td>
+                <td>{num(c.interviews)}</td>
+                <td title={c.hires > 0 ? `지원자 ${fmtInt(c.people)}명 중 입사 ${fmtInt(c.hires)}명` : undefined}>{num(c.hires)}</td>
+                <td>{c.spendKrw != null ? fmtKrw(c.spendKrw) : <span className="dim">–</span>}</td>
+                <td>{c.cpaKrw != null ? fmtKrw(c.cpaKrw) : <span className="dim">–</span>}</td>
+                <td>{c.costPerHireKrw != null ? fmtKrw(c.costPerHireKrw) : <span className="dim">–</span>}</td>
+              </tr>
             )
           })}
         </tbody>
@@ -47,8 +145,8 @@ export function ChannelTable({ channels }: { channels: Channel[] }) {
           <tr>
             <td>합계</td>
             <td>{fmtInt(totalPeople)}</td>
-            <td>{fmtInt(sum(c => c.docPass))}</td>
-            <td>{fmtInt(sum(c => c.interviews))}</td>
+            <td>{fmtInt(sum(channels, c => c.docPass))}</td>
+            <td>{fmtInt(sum(channels, c => c.interviews))}</td>
             <td>{fmtInt(totalHires)}</td>
             <td>{totalSpend != null ? fmtKrw(totalSpend) : '–'}</td>
             <td>{totalSpend != null && totalPeople > 0 ? fmtKrw(totalSpend / totalPeople) : '–'}</td>

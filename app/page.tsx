@@ -2,7 +2,7 @@ import { Suspense, cache } from 'react'
 import { getMasterData, type Period } from '@/lib/aggregate'
 import { fmtDateTime, fmtInt, fmtKrw, fmtPct, fmtSinceMonth, fmtUsd } from '@/lib/fmt'
 import { Funnel, MonthlyBars, StatTile } from '@/components/viz'
-import { ChannelTable, CompanyTable, JdHealthSummary, JdTable } from '@/components/tables'
+import { ChannelHealthSummary, ChannelTable, CompanyTable, JdHealthSummary, JdTable } from '@/components/tables'
 import { CountUp } from '@/components/count-up'
 import { RefreshButton } from '@/components/refresh-button'
 
@@ -402,12 +402,13 @@ async function Dashboard({
           </section>
 
           <section className="section">
-            <div className="section-head">
+            <div className="section-head wrapline">
               <h2>유입 채널별 성과·비용</h2>
               <span className="sub">
-                지원자 많은 순 · <span className="ck paid">유료</span> 게재비·광고 집행{' '}
+                성과순 · <span className="ck paid">유료</span> 게재비·광고 집행{' '}
                 <span className="ck own">자사</span> 우리 플랫폼 <span className="ck free">무료</span> 무료 게재
               </span>
+              <ChannelHealthSummary channels={supply.channels} />
             </div>
             <div className="card">
               <ChannelTable channels={supply.channels} />
@@ -501,6 +502,17 @@ async function Dashboard({
               <div>
                 <dt>채용당 비용</dt>
                 <dd>채널 지출 ÷ 입사 수</dd>
+              </div>
+              <div>
+                <dt>채널 판정</dt>
+                <dd>
+                  성과 = 입사 발생, 채용당 비용 정상 · 고비용 = 입사는 있지만 채용당 비용이 전체 평균의 3배 이상 ·
+                  점검 = 지출 있는데 입사 0 · 관망 = 지출·입사 모두 0 — 비용 데이터가 없는 기간 보기에서는 표시 안 함
+                </dd>
+              </div>
+              <div>
+                <dt>과거 유입 경로</dt>
+                <dd>지금은 쓰지 않는 유입 경로 (구 시트·구글폼·채널 미상 등) — 채널 표 맨 아래 '과거' 칩으로 구분, 판정 제외</dd>
               </div>
               <div>
                 <dt>베트남 매칭</dt>

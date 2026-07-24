@@ -61,7 +61,8 @@ const CHANNEL_LABELS: Record<string, string> = {
   _unattributed: '미귀속 (파이프라인 외)',
   '(미상)': '채널 미상',
 }
-export const channelLabel = (key: string) => CHANNEL_LABELS[key] || key
+// 내부 코드값은 화면에 노출 금지 — 매핑에 없는 external-* 류는 일반명으로 감춘다
+export const channelLabel = (key: string) => CHANNEL_LABELS[key] || (/^external-/i.test(key) ? '외부 유입' : key)
 
 // 채널 성격 — 유료(게재비·광고 집행) / 자사(우리 플랫폼) / 무료(무료 게재)
 const CHANNEL_KIND: Record<string, 'paid' | 'own' | 'free'> = {

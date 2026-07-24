@@ -365,6 +365,8 @@ tfoot td { border-top: 1px solid var(--baseline); border-bottom: none; font-weig
 .ck.paid { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-text); }
 .ck.own { background: color-mix(in srgb, var(--brand-2) 14%, transparent); color: #e8590c; }
 .ck.free { border: 1px solid var(--border); color: var(--muted); }
+/* 지금은 안 쓰는 유입 경로 — 무료(실선)와 구분되게 점선 */
+.ck.past { border: 1px dashed var(--border); color: var(--muted); }
 @media (prefers-color-scheme: dark) {
   .ck.own { color: #ffa066; }
 }
