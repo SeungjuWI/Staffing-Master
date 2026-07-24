@@ -122,13 +122,18 @@ export async function GET() {
       const key = String(r[2] || '').trim().toLowerCase() || name
       if (!seen.has(key)) { seen.add(key); ivPeople++ }
     }
-    // 채널 귀속용 이메일 셋 (candidates + FYI)
+    // 채널 귀속용 이메일 셋 (candidates + FYI) + 이름 폴백용 final_passed 이름 셋
+    // (지원 이메일 ≠ 온보딩 이메일 실사례가 있어 이메일 단독 매칭은 누락 발생)
     const candEmails = new Set(
       (await fetchAll<any>(ktc, 'candidates', 'email')).map(c => String(c.email || '').toLowerCase()).filter(Boolean),
     )
     const fyiEmails = new Set(fyiApps.map(a => String(a.applicant_email).toLowerCase()))
+    const fp = await fetchAll<any>(ktc, 'candidates', 'full_name, email, applied_company, applied_job, sheet_source', q => q.eq('pipeline_status', 'final_passed'))
+    const norm = (s: any) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim()
+    const fpNamesNorm = new Set(fp.map(c => norm(c.full_name)).filter(Boolean))
     const hIdx = empRows.findIndex((r: any[]) => r.includes('Name') && r.some((c: any) => /e-?mail/i.test(c || '')))
     const empEmails = new Set<string>()
+    const empNamesNorm = new Set<string>()
     if (hIdx >= 0) {
       const H = empRows[hIdx]
       const col = (re: RegExp) => H.findIndex((c: any) => re.test(String(c || '').replace(/\n/g, ' ').trim()))
@@ -146,15 +151,14 @@ export async function GET() {
           byNameRev[nm] = { rev: num(r[rci.revenue]), profit: num(r[rci.profit]) }
         }
       }
-      const empNamesNorm = new Set<string>()
       for (const r of empRows.slice(hIdx + 1)) {
         const email = String(r[ci.email] || '').trim().toLowerCase()
         const name = String(r[ci.name] || '').trim()
-        if (!name || !email.includes('@')) continue
+        if (name.length < 2 || /^\d+$/.test(name)) continue // 이메일 없는 행 포함, 카운트/집계 행만 스킵
         empTotal++
-        empEmails.add(email)
+        if (email.includes('@')) empEmails.add(email)
         empNamesNorm.add(name.toLowerCase().replace(/\s+/g, ' ').trim())
-        const attributed = candEmails.has(email) || fyiEmails.has(email)
+        const attributed = candEmails.has(email) || fyiEmails.has(email) || fpNamesNorm.has(norm(name))
         if (attributed) {
           empAttributed++
           if (/^ing$/i.test(String(r[ci.status] || '').trim())) empIng++
@@ -171,10 +175,11 @@ export async function GET() {
         if (!empNamesNorm.has(nm)) revRowsUnmatched.push(nm)
       }
     }
-    // final_passed 인데 Employee 에 없는 인원 (23 vs 22 격차 원인)
-    const fp = await fetchAll<any>(ktc, 'candidates', 'full_name, email, applied_company, applied_job, sheet_source', q => q.eq('pipeline_status', 'final_passed'))
+    // final_passed 인데 Employee 에 없는 인원 (이메일·이름 어느 쪽으로도 매칭 안 될 때만)
     for (const c of fp) {
-      if (!empEmails.has(String(c.email || '').toLowerCase())) {
+      const emailHit = empEmails.has(String(c.email || '').toLowerCase())
+      const nameHit = empNamesNorm.has(norm(c.full_name))
+      if (!emailHit && !nameHit) {
         finalPassedNotInEmp++
         fpNotInEmpList.push({ name: c.full_name, email: c.email, company: c.applied_company, job: c.applied_job, channel: c.sheet_source })
       }

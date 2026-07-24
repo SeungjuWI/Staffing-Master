@@ -165,7 +165,7 @@ async function fetchRaw(): Promise<Raw> {
   }
 
   const [candidates, applications, resumeCount, publicCount, master, ops] = await Promise.all([
-    grab('파이프라인(candidates)', () => fetchAll<any>(ktc, 'candidates', 'sheet_source, email, applied_job, applied_date, pipeline_status'), []),
+    grab('파이프라인(candidates)', () => fetchAll<any>(ktc, 'candidates', 'full_name, sheet_source, email, applied_job, applied_date, pipeline_status'), []),
     grab('지원 건(ktc_applications)', () => fetchAll<any>(fyi, 'ktc_applications', 'sheet_source, job_code, applied_at'), []),
     grab('인재풀(이력서)', async () => {
       const { count, error } = await fyi.from('user_profiles').select('id', { count: 'exact', head: true }).not('resume_url', 'is', null)
@@ -456,7 +456,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       for (const r of empSheet.slice(hIdx + 1)) {
         const email = String(r[ci.email] || '').trim().toLowerCase()
         const name = String(r[ci.name] || '').trim()
-        if (!name || !email.includes('@')) continue
+        // 이메일 없는 행도 포함 (이름 폴백으로 귀속) — 단 카운트/집계용 행은 스킵
+        if (name.length < 2 || /^\d+$/.test(name)) continue
         hires.push({ company: String(r[ci.company] || '').trim(), email, name, status: String(r[ci.status] || '').trim(), hired_at: null, left_at: null, revenue: 0, profit: 0 })
       }
     }
@@ -477,8 +478,13 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     }
   }
 
-  // 파이프라인 미귀속 입사(Ops 시트에만 있는 별도 경로 입사)는 모든 집계에서 제외
-  const attributedHires = hires.filter(h => channelForEmailAll(h.email))
+  // 파이프라인 미귀속 입사(Ops 시트에만 있는 별도 경로 입사)는 모든 집계에서 제외.
+  // 귀속 판정: 이메일 매칭 + 이름 매칭 폴백 — 지원 이메일과 온보딩 이메일이 다른 실사례가 있어
+  // (2026-07 Ops 확인) 이메일만으로는 파이프라인 입사자를 미귀속으로 잘못 분류할 수 있다.
+  const fpNames = new Set(
+    candidates.filter(c => (c.pipeline_status || '') === 'final_passed').map(c => normName(c.full_name)).filter(Boolean),
+  )
+  const attributedHires = hires.filter(h => channelForEmailAll(h.email) || fpNames.has(normName(h.name)))
   const excludedHires = hires.length - attributedHires.length
 
   // ── 비용 적용 (누적 전용) ──────────────────────────────────
