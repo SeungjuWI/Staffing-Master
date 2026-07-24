@@ -644,7 +644,9 @@ const TTL = 30 * 60 * 1000
 
 export async function getMasterData(fresh = false, period: Period = 'all'): Promise<MasterData> {
   if (!hasLiveEnv()) return mockData()
-  if (fresh || !rawCache || Date.now() - rawCache.at > TTL) {
+  // 새로고침 연타 가드: 직전 갱신 60초 이내의 fresh 요청은 캐시로 응답 (시트 분당 쿼터 보호)
+  const freshAllowed = fresh && (!rawCache || Date.now() - rawCache.at >= 60_000)
+  if (freshAllowed || !rawCache || Date.now() - rawCache.at > TTL) {
     if (!inflight) {
       inflight = fetchRaw().finally(() => { inflight = null })
       rawCache = { at: Date.now(), raw: await inflight }
