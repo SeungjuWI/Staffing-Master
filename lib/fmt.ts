@@ -27,6 +27,18 @@ export function fmtMonthFull(m: string): string {
   return `${y}년 ${parseInt(mo)}월`
 }
 
+// 'YYYY-MM-DD' → '5월 4일' (올해가 아니면 '25년 11월 12일')
+export function fmtDay(d: string, nowYear = new Date().getFullYear()): string {
+  const [y, mo, day] = d.split('-').map(Number)
+  return y === nowYear ? `${mo}월 ${day}일` : `${String(y).slice(2)}년 ${mo}월 ${day}일`
+}
+
+// 'YYYY-MM-DD' → '2026년 3월' (수집 시작 시점 표기)
+export function fmtSinceMonth(d: string): string {
+  const [y, mo] = d.split('-').map(Number)
+  return `${y}년 ${mo}월`
+}
+
 export function fmtDateTime(iso: string): string {
   const d = new Date(iso)
   return d.toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' })

@@ -58,6 +58,37 @@ function extractJobCode(appliedJob: unknown) {
   return m ? m[1] : null
 }
 
+// JD 시트 Date Received(수주일) — dd/mm/yyyy 와 m/d/yyyy 가 섞여 있어(실측: "22/04/2026" 과
+// "7/13/2026" 공존) 양쪽 해석을 만들고, 미래 날짜를 버린 뒤 최초 지원일에 가까운 쪽을 고른다.
+// 그래도 동률이면 월/일 해석 (최근 행들의 관행).
+function parseReceived(raw: unknown, firstAppIso: string | null, nowMs: number): string | null {
+  const s = String(raw || '').trim()
+  let m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/)
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/)
+  if (!m) return null
+  const a = +m[1], b = +m[2], y = +m[3]
+  const mk = (d: number, mo: number) =>
+    mo >= 1 && mo <= 12 && d >= 1 && d <= 31 ? `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}` : null
+  const ts = (d: string) => new Date(`${d}T00:00:00+07:00`).getTime()
+  const cands = [...new Set([mk(a, b), mk(b, a)].filter((d): d is string => d != null))]
+  const past = cands.filter(d => ts(d) <= nowMs + 3 * 86400000)
+  const pool = past.length ? past : cands
+  if (!pool.length) return null
+  if (pool.length === 1) return pool[0]
+  if (firstAppIso) {
+    const fa = new Date(firstAppIso).getTime()
+    pool.sort((d1, d2) => Math.abs(ts(d1) - fa) - Math.abs(ts(d2) - fa))
+    return pool[0]
+  }
+  return mk(b, a) || pool[0]
+}
+
+// TO 1명당 지원 30명 = "정상선" — 입사가 성사된 공고 15건의 TO당 지원자가
+// 최소 9 ~ 중앙값 61이고 하위 사분위가 ~28명 (2026-07 실측). 이보다 낮으면 지원 부족.
+const APPS_PER_TO_FLOOR = 30
+const EARLY_DAYS = 14 // 수주 2주 미만은 판정 유예 (모집 초기)
+
 // VN(UTC+7) 기준 YYYY-MM
 const toVNMonth = (iso: string) => new Date(new Date(iso).getTime() + 7 * 3600000).toISOString().slice(0, 7)
 
@@ -345,8 +376,11 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   }
 
   // ── 전체 패스 (기간 무관): 진행 중 스냅샷·귀속 맵·누적 입사 ──
+  // 공고 판정용 누적치도 여기서 — 기간 보기에서도 판정은 스톡(현재 상태·누적 지원자) 기준.
   const chanByEmailAll: Record<string, string> = {}
   const statusCount: Record<string, number> = {}
+  const perJdAll: Record<string, { people: number; cur: Record<string, number>; firstApp: string | null }> = {}
+  const jdAll = (code: string) => perJdAll[code] || (perJdAll[code] = { people: 0, cur: {}, firstApp: null })
   let finalPassedAll = 0
   for (const c of candidates) {
     const e = String(c.email || '').toLowerCase()
@@ -354,6 +388,14 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     statusCount[st] = (statusCount[st] || 0) + 1
     if (st === 'final_passed') finalPassedAll++
     if (e && !chanByEmailAll[e]) chanByEmailAll[e] = c.sheet_source || '(미상)'
+    const code = extractJobCode(c.applied_job)
+    if (code) {
+      const j = jdAll(code)
+      j.people++
+      j.cur[st] = (j.cur[st] || 0) + 1
+      const at = parseAppliedAt(c.applied_date, c.sheet_source)
+      if (at && (!j.firstApp || at < j.firstApp)) j.firstApp = at
+    }
   }
   const channelForEmailAll = (e: string) => chanByEmailAll[e] || (fyiEmails.has(e) ? 'FYI' : null)
 
@@ -407,6 +449,10 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   let applicationsTotal = 0
   for (const a of applications) {
     if (a.applied_at) monthly[toVNMonth(a.applied_at)] = (monthly[toVNMonth(a.applied_at)] || 0) + 1
+    if (a.job_code && a.applied_at) {
+      const j = jdAll(a.job_code)
+      if (!j.firstApp || a.applied_at < j.firstApp) j.firstApp = a.applied_at
+    }
     if (!inPeriod(a.applied_at)) continue
     bump(a.sheet_source || '(미상)', 'applications')
     applicationsTotal++
@@ -543,6 +589,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     company: jdCol(/company/i, 1),
     title: jdCol(/job\s*title/i, 2),
     headcount: jdCol(/headcount/i, 6),
+    received: jdCol(/date\s*received/i, 7),
     status: jdCol(/job\s*status/i, 9),
   }
   const jdDataRows = jdHeaderIdx >= 0 ? jdSheet.slice(jdHeaderIdx + 1) : jdSheet.slice(3)
@@ -552,18 +599,50 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       const code = String(r[JC.code]).trim()
       const agg = perJd[code] || { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0 }
       const status = String(r[JC.status] || '').trim()
+      const open = !CLOSED_RE.test(status)
+      const headcount = parseInt(r[JC.headcount]) || null
+
+      // 판정 재료는 누적/현재 상태 기준 (기간 보기여도 판정은 안 바뀐다)
+      const all = perJdAll[code] || { people: 0, cur: {}, firstApp: null }
+      const cur = all.cur
+      const curCompany = cur.sent_to_company || 0
+      const curInterview = cur.interviewing || 0
+      const curOffer = cur.offer || 0
+      const curInternal = (cur.new || 0) + (cur.passed || 0) + (cur.ready_to_forward || 0)
+      const hiresAll = cur.final_passed || 0
+      const startDate = parseReceived(r[JC.received], all.firstApp, fetchedAt) || (all.firstApp ? all.firstApp.slice(0, 10) : null)
+      const days = startDate ? Math.max(0, Math.round((fetchedAt - new Date(`${startDate}T00:00:00+07:00`).getTime()) / 86400000)) : null
+
+      let health: JdRow['health'] = null
+      if (open) {
+        if (headcount != null && hiresAll >= headcount) health = 'good' // 충원 완료
+        else if (curOffer + curInterview + curCompany > 0) health = 'good' // 기업 단계 진행 중
+        else if (days != null && days < EARLY_DAYS) health = 'early'
+        else if (all.people < APPS_PER_TO_FLOOR * (headcount || 1)) health = 'low'
+        else health = 'stall'
+      }
+
       return {
         code,
         company: String(r[JC.company] || '').trim(),
         title: String(r[JC.title] || '').trim(),
-        headcount: parseInt(r[JC.headcount]) || null,
+        headcount,
         status,
-        open: !CLOSED_RE.test(status),
+        open,
         apps: agg.apps, people: agg.people, docPass: agg.docPass,
         delivered: agg.delivered, interviews: agg.interviews, offer: agg.offer, hires: agg.hires,
+        startDate, days, peopleAll: all.people, curInternal, curCompany, curInterview, curOffer, health,
       }
     })
-    .sort((a: JdRow, b: JdRow) => Number(b.open) - Number(a.open) || b.people - a.people)
+    .sort((a: JdRow, b: JdRow) => {
+      if (a.open !== b.open) return Number(b.open) - Number(a.open)
+      // 진행 중: 순항 → 정체 → 지원 부족 → 모집 초기, 같은 판정 안에선 진행 깊은 순 → 지원자 많은 순
+      const rank = (j: JdRow) => (j.health === 'good' ? 0 : j.health === 'stall' ? 1 : j.health === 'low' ? 2 : j.health === 'early' ? 3 : 4)
+      if (a.open && rank(a) !== rank(b)) return rank(a) - rank(b)
+      const depth = (j: JdRow) => j.curOffer * 10000 + j.curInterview * 100 + j.curCompany
+      if (a.open && depth(a) !== depth(b)) return depth(b) - depth(a)
+      return b.people - a.people
+    })
 
   const openJds = jds.filter(j => j.open)
   const headcountTotal = openJds.reduce((s, j) => s + (j.headcount || 0), 0)
@@ -651,6 +730,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       headcountTotal,
       hiresInOpen,
       fillRateOpen: headcountTotal > 0 ? hiresInOpen / headcountTotal : null,
+      jdSince: jds.reduce<string | null>((min, j) => (j.startDate && (!min || j.startDate < min) ? j.startDate : min), null),
     },
     vietnam,
     outcome: {
@@ -683,7 +763,7 @@ const getCachedByPeriod = unstable_cache(
       '30d': computeFromRaw(raw, '30d', at),
     }
   },
-  ['staffing-master-data-v2'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v3'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

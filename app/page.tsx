@@ -1,8 +1,8 @@
 import { Suspense, cache } from 'react'
 import { getMasterData, type Period } from '@/lib/aggregate'
-import { fmtDateTime, fmtInt, fmtKrw, fmtPct, fmtUsd } from '@/lib/fmt'
+import { fmtDateTime, fmtInt, fmtKrw, fmtPct, fmtSinceMonth, fmtUsd } from '@/lib/fmt'
 import { Funnel, MonthlyBars, StatTile } from '@/components/viz'
-import { ChannelTable, CompanyTable, JdTable } from '@/components/tables'
+import { ChannelTable, CompanyTable, JdHealthSummary, JdTable } from '@/components/tables'
 import { CountUp } from '@/components/count-up'
 import { RefreshButton } from '@/components/refresh-button'
 
@@ -311,19 +311,20 @@ async function Dashboard({
           </section>
 
           <section className="section">
-            <div className="section-head">
+            <div className="section-head wrapline">
               <h2>진행 중 공고</h2>
               <span className="sub">
-                {fmtInt(openJds.length)}건 · 채용 목표 {fmtInt(matching.headcountTotal)}명 · 충원율{' '}
-                {fmtPct(matching.fillRateOpen, 0)}
+                {fmtInt(openJds.length)}건 · 목표 {fmtInt(matching.headcountTotal)}명 중 {fmtInt(matching.hiresInOpen)}명 채움
+                {matching.jdSince && <> · {fmtSinceMonth(matching.jdSince)}부터 누적 {fmtInt(matching.jds.length)}건 수주</>}
               </span>
+              <JdHealthSummary jds={openJds} />
             </div>
             <div className="card">
               <JdTable jds={openJds} />
               {closedJds.length > 0 && (
                 <details className="fold">
                   <summary>마감 공고 {fmtInt(closedJds.length)}건 보기</summary>
-                  <JdTable jds={closedJds} />
+                  <JdTable jds={closedJds} mode="closed" />
                 </details>
               )}
             </div>
@@ -473,6 +474,25 @@ async function Dashboard({
               <div>
                 <dt>TO / 충원율</dt>
                 <dd>공고별 채용 목표 인원 / 입사 ÷ TO</dd>
+              </div>
+              <div>
+                <dt>수주일</dt>
+                <dd>기업에서 공고를 받은 날 (Master 시트 Date Received, 미기재 시 그 공고의 최초 지원일)</dd>
+              </div>
+              <div>
+                <dt>공고 판정</dt>
+                <dd>
+                  순항 = 충원 완료 또는 기업 검토·면접·오퍼 진행 인원 있음 · 정체 = 지원은 충분한데 기업 단계 진행 0 ·
+                  지원 부족 = TO 1명당 지원 30명 미만 · 모집 초기 = 수주 2주 미만 (판정 유예)
+                </dd>
+              </div>
+              <div>
+                <dt>TO당 지원 30명</dt>
+                <dd>지원 부족의 기준선 — 입사가 성사된 공고들의 TO당 지원자 실측 (최소 9 ~ 중앙값 61명)의 하위 사분위 수준</dd>
+              </div>
+              <div>
+                <dt>진행 인원</dt>
+                <dd>지금 그 단계에 걸려 있는 인원 (현재 상태 기준, 도달 누적 아님)</dd>
               </div>
               <div>
                 <dt>지원자당 비용</dt>

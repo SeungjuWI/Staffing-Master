@@ -14,6 +14,12 @@
   --accent-text: #1b64da;
   --accent-track: #d3e4ff;
   --good: #006300;
+  /* 공고 판정 상태색 (dataviz status — 시리즈색과 분리, 항상 라벨과 동반) */
+  --ok: #0ca30c;
+  --warn: #d97706;
+  --warn-text: #b45309;
+  --bad: #d03b3b;
+  --bad-text: #d03b3b;
   --brand-1: #ff8a3d; /* 멋사 오렌지 — 로고 마크 전용 (데이터 색과 분리) */
   --brand-2: #ff5b22;
   /* 퍼널 ordinal 램프 (validate_palette --ordinal, 비비드 블루 스텝 통과) */
@@ -36,6 +42,11 @@
     --accent-text: #8ab9fe;
     --accent-track: #143c7c;
     --good: #0ca30c;
+    --ok: #0ca30c;
+    --warn: #fab219;
+    --warn-text: #fab219;
+    --bad: #e66767;
+    --bad-text: #e66767;
     --brand-1: #ff8a3d;
     --brand-2: #ff5b22;
     --f1: #1e68d7; --f2: #3182f6; --f3: #5a9bfb; --f4: #8ab9fe; --f5: #aecffe; --f6: #d3e4ff;
@@ -58,6 +69,9 @@ body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  /* 한글이 단어 중간에서 끊기지 않게 — 공백 단위로만 줄바꿈 (긴 영문 토큰은 break-word 로 안전) */
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
 a { color: inherit; text-decoration: none; }
 
@@ -354,6 +368,57 @@ tfoot td { border-top: 1px solid var(--baseline); border-bottom: none; font-weig
 @media (prefers-color-scheme: dark) {
   .ck.own { color: #ffa066; }
 }
+
+/* ═══ 공고 판정 (한국 매칭) ═══ */
+/* 판정 점 — 색+실루엣 이중 부호화 (색약 대비): 순항/정체 = 원, 지원 부족 = 사각, 초기 = 빈 원 */
+.jdot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 7px; vertical-align: 0;
+}
+.jdot.good { background: var(--ok); }
+.jdot.stall { background: var(--warn); }
+.jdot.low { background: var(--bad); border-radius: 2.5px; }
+.jdot.early { background: transparent; border: 1.5px solid var(--baseline); }
+
+/* 섹션 헤드의 판정 요약 — 뭐가 잘되고 뭐가 안되는지 즉답 (범례 겸용) */
+.section-head.wrapline { flex-wrap: wrap; row-gap: 4px; }
+.hsum { display: inline-flex; gap: 13px; margin-left: auto; font-size: 12.5px; color: var(--ink-2); flex-wrap: wrap; }
+.hsum .hs { display: inline-flex; align-items: center; white-space: nowrap; cursor: help; position: relative; }
+.hsum .hs .jdot { margin-right: 5px; }
+.hsum .hs b { font-weight: 700; color: var(--ink); margin-left: 4px; font-variant-numeric: tabular-nums; }
+.hsum .hs.zero { opacity: 0.45; }
+/* 판정 툴팁 — 호버 즉시 표시, 카드와 같은 밝은 서피스.
+   요약 칩(기준 설명)과 공고명 셀(문제 공고의 판정 이유)이 같은 스타일을 공유한다 */
+.hsum .hs .tip, .jdcell .tip {
+  display: none; position: absolute; z-index: 20;
+  /* 흰 표 위에서 묻히지 않게 — 액센트 틴트 배경 + 액센트 기 도는 테두리 + 뚜렷한 그림자 */
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 9px; padding: 8px 12px;
+  font-size: 12.5px; font-weight: 400; line-height: 1.55; white-space: normal;
+  width: max-content; max-width: 340px; text-align: left; pointer-events: none;
+  word-break: keep-all; text-wrap: pretty;
+  box-shadow: 0 3px 8px rgba(16, 18, 30, 0.08), 0 16px 40px -10px rgba(16, 18, 30, 0.3);
+}
+.hsum .hs .tip { top: calc(100% + 8px); right: 0; }
+.hsum .hs:hover .tip { display: block; animation: fade 0.12s both; }
+.hsum .hs.zero:hover { opacity: 1; }
+
+/* 공고명 셀 툴팁 — 아래로 펼치되, 표 마지막 행들은 잘리지 않게 위로 */
+.jdcell { position: relative; }
+.jdcell .tip { top: calc(100% - 5px); left: 10px; }
+.jdcell:hover .tip { display: block; animation: fade 0.12s both; }
+tbody tr:nth-last-child(-n + 3) .jdcell .tip { top: auto; bottom: calc(100% - 5px); }
+.jdcell .tip b { color: var(--ink); font-weight: 650; }
+/* 공고명 줄은 길어도 한 줄 고정 (말줄임) — 두 줄로 꺾이면 판정 이유보다 시끄러워진다 */
+.jdcell .tip .tipline {
+  display: block; color: var(--muted); font-size: 11.5px; margin-bottom: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 316px;
+}
+
+/* 기업별 성과 — 마이너스 이익 경고 */
+.neg { color: var(--bad-text); font-weight: 650; }
 
 /* 미터 (충원율) */
 .meter { display: inline-flex; align-items: center; gap: 8px; }

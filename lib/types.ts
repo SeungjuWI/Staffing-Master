@@ -15,6 +15,13 @@ export type Channel = {
   costPerHireKrw: number | null // 채용당 비용 = 지출 ÷ 입사
 }
 
+// 공고 판정 — 진행 중 공고만 (마감은 null)
+//  good  순항: 충원 완료거나, 지금 기업 검토·면접·오퍼 단계에 사람이 있음
+//  early 모집 초기: 수주 14일 미만 (판정 유예)
+//  low   지원 부족: TO 1명당 지원 30명 미만 (입사가 나온 공고들의 하위 사분위 기준)
+//  stall 정체: 지원은 충분한데 지금 기업 단계에 아무도 없음 (내부 적체)
+export type JdHealth = 'good' | 'early' | 'low' | 'stall'
+
 export type JdRow = {
   code: string           // 공고코드 (FPT401 등)
   company: string
@@ -29,6 +36,14 @@ export type JdRow = {
   interviews: number     // 면접 (INTERVIEW 탭)
   offer: number          // 오퍼 도달
   hires: number          // 입사
+  startDate: string | null // 수주일 (시트 Date Received, 없으면 최초 지원일) YYYY-MM-DD
+  days: number | null    // 수주 후 경과 일수
+  peopleAll: number      // 누적 지원자 — 판정·사유는 기간 필터와 무관하게 이 값 기준
+  curInternal: number    // 현재 내부 단계 인원 (스크리닝 대기·합격·발송 대기)
+  curCompany: number     // 현재 기업 검토 중
+  curInterview: number   // 현재 면접 진행 중
+  curOffer: number       // 현재 오퍼·계약 중
+  health: JdHealth | null
 }
 
 export type FunnelStage = {
@@ -97,6 +112,7 @@ export type MasterData = {
     headcountTotal: number      // 오픈 공고 TO 합
     hiresInOpen: number         // 오픈 공고에서 이미 채운 인원
     fillRateOpen: number | null // 오픈 공고 충원율
+    jdSince: string | null      // 가장 이른 수주일 — "언제부터 모은 숫자인지" 표기용
   }
 
   vietnam: VietnamBlock
