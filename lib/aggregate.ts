@@ -16,6 +16,7 @@
 //
 // 집계 규칙은 salarymap pages/api/admin/ktc-jd-funnel.js 이식 + 현행 상태값 보정.
 
+import { unstable_cache } from 'next/cache'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import type { Channel, CompanyPerf, FunnelStage, JdRow, MasterData, MonthPoint, VietnamBlock } from './types'
 import { mockData } from './mock'
@@ -127,6 +128,7 @@ type Raw = {
   vnJobs: any[]
   vnApps: any[]
   cost: CostData | null
+  fetchedAt: number
 }
 
 // ── 원본 로드 (기간·탭 무관, 30분 캐시) ─────────────────────
@@ -164,27 +166,25 @@ async function fetchRaw(): Promise<Raw> {
     return (res.data.valueRanges || []).map((v: any) => v.values || [])
   }
 
-  const [candidates, applications, resumeCount, publicCount, master, ops] = await Promise.all([
-    grab('파이프라인(candidates)', () => fetchAll<any>(ktc, 'candidates', 'full_name, sheet_source, email, applied_job, applied_date, pipeline_status'), []),
-    grab('지원 건(ktc_applications)', () => fetchAll<any>(fyi, 'ktc_applications', 'sheet_source, job_code, applied_at'), []),
-    grab('인재풀(이력서)', async () => {
-      const { count, error } = await fyi.from('user_profiles').select('id', { count: 'exact', head: true }).not('resume_url', 'is', null)
-      if (error) throw new Error(error.message)
-      return count || 0
-    }, 0),
-    grab('인재풀(공개)', async () => {
-      const { count, error } = await fyi.from('user_profiles').select('id', { count: 'exact', head: true }).not('resume_url', 'is', null).eq('is_resume_public', true)
-      if (error) throw new Error(error.message)
-      return count || 0
-    }, 0),
-    grab('Master 시트(공고·면접)', () => batchGet(MASTER_SHEET_ID, ["'JD EXECUTION'!A1:N", "'INTERVIEW'!A1:N"]), [[], []]),
-    grab('KTC Ops 시트(입사·매출)', () => batchGet(KTC_OPS_SHEET_ID, ["'Employee'!A1:T", "'매출현황'!A1:N"]), [[], []]),
-  ])
-  const [jdSheet, ivSheet] = master
-  const [empSheet, revSheet] = ops
+  // 모든 원본 로드는 서로 독립적 → promise 를 먼저 전부 띄우고(아래) 한 번에 await 한다.
+  // (기존엔 FYI 지원·베트남·비용이 순차 await 라 콜드 fetch 시간이 합산됐다 → 이제 임계경로 = 가장 느린 1개)
+  const pCandidates = grab('파이프라인(candidates)', () => fetchAll<any>(ktc, 'candidates', 'full_name, sheet_source, email, applied_job, applied_date, pipeline_status'), [])
+  const pApplications = grab('지원 건(ktc_applications)', () => fetchAll<any>(fyi, 'ktc_applications', 'sheet_source, job_code, applied_at'), [])
+  const pResume = grab('인재풀(이력서)', async () => {
+    const { count, error } = await fyi.from('user_profiles').select('id', { count: 'exact', head: true }).not('resume_url', 'is', null)
+    if (error) throw new Error(error.message)
+    return count || 0
+  }, 0)
+  const pPublic = grab('인재풀(공개)', async () => {
+    const { count, error } = await fyi.from('user_profiles').select('id', { count: 'exact', head: true }).not('resume_url', 'is', null).eq('is_resume_public', true)
+    if (error) throw new Error(error.message)
+    return count || 0
+  }, 0)
+  const pMaster = grab('Master 시트(공고·면접)', () => batchGet(MASTER_SHEET_ID, ["'JD EXECUTION'!A1:N", "'INTERVIEW'!A1:N"]), [[], []])
+  const pOps = grab('KTC Ops 시트(입사·매출)', () => batchGet(KTC_OPS_SHEET_ID, ["'Employee'!A1:T", "'매출현황'!A1:N"]), [[], []])
 
   // FYI(KTC 공고) 지원자 — salarymap 라이브
-  const fyiApps = await grab('FYI 지원', async () => {
+  const pFyiApps = grab('FYI 지원', async () => {
     const jobs = await fetchAll<any>(fyi, 'jobs', 'id', q => q.eq('source', 'ktc'))
     const ids = jobs.map(j => j.id)
     let apps: any[] = []
@@ -195,7 +195,7 @@ async function fetchRaw(): Promise<Raw> {
   }, [])
 
   // 베트남 매칭 트랙 (FYI 자체 공고 — ktc-support 미경유)
-  const { vnJobs, vnApps } = await grab('베트남 매칭(FYI 자체 공고)', async () => {
+  const pVn = grab('베트남 매칭(FYI 자체 공고)', async () => {
     const jobs = await fetchAll<any>(fyi, 'jobs', 'id, company, is_active', q => q.eq('source', 'company_self'))
     const ids = jobs.map(j => j.id)
     let apps: any[] = []
@@ -207,7 +207,10 @@ async function fetchRaw(): Promise<Raw> {
   }, { vnJobs: [], vnApps: [] })
 
   // 채널별 지출 (비용 시트) — 실패해도 나머지는 정상
-  const cost = sheets ? await grab<CostData | null>('비용 시트', async () => {
+  const pCost: Promise<CostData | null> = sheets ? grab<CostData | null>('비용 시트', async () => {
+    // 환율은 외부 API(open.er-api.com) — 시트 읽기와 겹쳐 미리 띄워 임계경로에서 뺀다
+    const fxPromise = fetch('https://open.er-api.com/v6/latest/VND', { signal: AbortSignal.timeout(4000) })
+      .then(r => r.json()).then((j: any) => (j?.rates?.KRW > 0 ? (j.rates.KRW as number) : null)).catch(() => null)
     const meta = await sheets.spreadsheets.get({ spreadsheetId: COST_SHEET_ID })
     const tabs = (meta.data.sheets || []).map((s: any) => s.properties.title)
     const findTab = (kw: string) => tabs.find((t: string) => t.toLowerCase().includes(kw.toLowerCase()))
@@ -238,12 +241,8 @@ async function fetchRaw(): Promise<Raw> {
         }
       }
     }
-    // VND→KRW 환율 (라이브 → 인보이스 유도 → 상수)
-    let vndToKrw: number | null = null
-    try {
-      const fx = await fetch('https://open.er-api.com/v6/latest/VND', { signal: AbortSignal.timeout(4000) }).then(r => r.json())
-      if (fx?.rates?.KRW > 0) vndToKrw = fx.rates.KRW
-    } catch { /* 폴백 */ }
+    // VND→KRW 환율 (라이브 → 인보이스 유도 → 상수) — 위에서 미리 띄운 fxPromise 수확
+    let vndToKrw: number | null = await fxPromise
     const invH = invRows.findIndex((r: any[]) => r.some(c => String(c || '').startsWith('합계')))
     const invoiceVnd: Record<string, number> = {}
     if (invH >= 0) {
@@ -302,9 +301,16 @@ async function fetchRaw(): Promise<Raw> {
       }
     }
     return { spendByChannel, postedByChannel, ktcMeta, fyiKtcMeta }
-  }, null) : null
+  }, null) : Promise.resolve<CostData | null>(null)
 
-  return { warnings, candidates, applications, resumeCount, publicCount, jdSheet, ivSheet, empSheet, revSheet, fyiApps, vnJobs, vnApps, cost }
+  // 위에서 띄운 promise 를 전부 한 번에 대기 (콜드 fetch = 가장 느린 1개 시간)
+  const [candidates, applications, resumeCount, publicCount, master, ops, fyiApps, vn, cost] =
+    await Promise.all([pCandidates, pApplications, pResume, pPublic, pMaster, pOps, pFyiApps, pVn, pCost])
+  const [jdSheet, ivSheet] = master
+  const [empSheet, revSheet] = ops
+  const { vnJobs, vnApps } = vn
+
+  return { warnings, candidates, applications, resumeCount, publicCount, jdSheet, ivSheet, empSheet, revSheet, fyiApps, vnJobs, vnApps, cost, fetchedAt: Date.now() }
 }
 
 type ChanAcc = {
@@ -637,23 +643,39 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   }
 }
 
-// ── 원본 캐시 (30분, 기간·탭 공유) — ?fresh=1 로 강제 갱신 ────
-let rawCache: { at: number; raw: Raw } | null = null
-let inflight: Promise<Raw> | null = null // 동시 요청이 몰려도 fetch 는 1번만
-const TTL = 30 * 60 * 1000
+// ── 캐시 (30분) — Vercel Data Cache 에 저장해 콜드 서버리스 인스턴스끼리 공유한다.
+// 기존 인메모리 캐시는 인스턴스마다 비어 있어서, 오래 안 열어본 뒤 접속(scale-to-zero
+// 콜드)마다 전 소스를 다시 읽어 수 초씩 걸렸다. Data Cache 는 인스턴스 경계를 넘어
+// 유지되고, 만료(30분) 후에도 stale 을 즉시 돌려주고 백그라운드로 갱신(SWR)한다.
+// 원본(Raw)이 아니라 집계 결과(MasterData)를 담는다 — 훨씬 작아 Data Cache 항목
+// 크기 한도(2MB)에 안전. 기간 3종을 한 번의 fetchRaw 로 계산해 함께 캐시한다.
+const TTL_SECONDS = 30 * 60
+
+const getCachedByPeriod = unstable_cache(
+  async (): Promise<Record<Period, MasterData>> => {
+    const raw = await fetchRaw()
+    const at = raw.fetchedAt
+    return {
+      all: computeFromRaw(raw, 'all', at),
+      month: computeFromRaw(raw, 'month', at),
+      '30d': computeFromRaw(raw, '30d', at),
+    }
+  },
+  ['staffing-master-data-v1'],
+  { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
+)
+
+// 새로고침 연타 가드 (인스턴스 로컬, 소프트) — 시트 분당 쿼터 보호
+let lastFreshAt = 0
 
 export async function getMasterData(fresh = false, period: Period = 'all'): Promise<MasterData> {
   if (!hasLiveEnv()) return mockData()
-  // 새로고침 연타 가드: 직전 갱신 60초 이내의 fresh 요청은 캐시로 응답 (시트 분당 쿼터 보호)
-  const freshAllowed = fresh && (!rawCache || Date.now() - rawCache.at >= 60_000)
-  if (freshAllowed || !rawCache || Date.now() - rawCache.at > TTL) {
-    if (!inflight) {
-      inflight = fetchRaw().finally(() => { inflight = null })
-      rawCache = { at: Date.now(), raw: await inflight }
-    } else {
-      const raw = await inflight
-      rawCache = rawCache || { at: Date.now(), raw }
-    }
+  // 새로고침(?fresh=1): 캐시를 건너뛰고 라이브로 재계산. 단 직전 60초 내면 캐시로 응답.
+  if (fresh && Date.now() - lastFreshAt >= 60_000) {
+    lastFreshAt = Date.now()
+    const raw = await fetchRaw()
+    return computeFromRaw(raw, period, raw.fetchedAt)
   }
-  return computeFromRaw(rawCache.raw, period, rawCache.at)
+  const byPeriod = await getCachedByPeriod()
+  return byPeriod[period]
 }

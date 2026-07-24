@@ -326,6 +326,14 @@ tfoot td { border-top: 1px solid var(--baseline); border-bottom: none; font-weig
 .tname { font-weight: 600; }
 .tsub { color: var(--muted); font-size: 12px; font-weight: 400; }
 .dim { color: var(--muted); }
+
+/* 데이터 로딩 스켈레톤 (Suspense fallback) */
+@keyframes skelPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+.skel-card { display: grid; gap: 12px; }
+.skel-bar {
+  height: 14px; border-radius: 7px; background: var(--grid);
+  animation: skelPulse 1.2s var(--ease) infinite;
+}
 /* 첫 컬럼(공고명 등)은 폭을 잡아먹지 않게 말줄임 — 전체 텍스트는 title 툴팁 */
 .cell-trunc { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 1024px) { .cell-trunc { max-width: 200px; } }
