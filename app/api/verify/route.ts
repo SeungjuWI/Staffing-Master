@@ -107,13 +107,20 @@ export async function GET() {
     const [jdRows, ivRows] = mRes.data.valueRanges.map((v: any) => v.values || [])
     const [empRows, revRows] = oRes.data.valueRanges.map((v: any) => v.values || [])
 
-    for (const r of jdRows.slice(3)) {
-      if (!String(r[0] || '').trim()) continue
+    // 열 위치는 헤더 이름으로 (aggregate.ts 와 동일 — 컬럼 이동에도 안 깨지게). 못 찾으면 실측 인덱스 폴백.
+    const jdHdrIdx = jdRows.findIndex((r: any[]) => r.some((c: any) => /job\s*id/i.test(String(c || ''))))
+    const jdHdr: any[] = jdHdrIdx >= 0 ? jdRows[jdHdrIdx] : []
+    const jdc = (re: RegExp, fb: number) => {
+      const i = jdHdr.findIndex((c: any) => re.test(String(c || '').replace(/\n/g, ' ').trim()))
+      return i >= 0 ? i : fb
+    }
+    const JCcode = jdc(/job\s*id/i, 0), JCcount = jdc(/headcount/i, 6), JCstatus = jdc(/job\s*status/i, 9)
+    for (const r of jdRows.slice(jdHdrIdx >= 0 ? jdHdrIdx + 1 : 3)) {
+      if (!String(r[JCcode] || '').trim()) continue
       jdTotal++
-      // Job Status=J(9), Headcount=G(6) — aggregate.ts 와 동일한 실측 인덱스
-      if (!CLOSED_RE.test(String(r[9] || '').trim())) {
+      if (!CLOSED_RE.test(String(r[JCstatus] || '').trim())) {
         jdOpen++
-        headcountOpen += parseInt(r[6]) || 0
+        headcountOpen += parseInt(r[JCcount]) || 0
       }
     }
     const seen = new Set<string>()

@@ -529,20 +529,34 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     })
 
   // ── 공고 원장 → JdRow ─────────────────────────────────────
-  const jds: JdRow[] = jdSheet.slice(3)
-    .filter((r: any[]) => String(r[0] || '').trim())
+  // 열 위치는 헤더 이름으로 찾는다 — 시트에 열이 추가/삭제돼도 안 깨지게(Employee 파싱과 동일 방식).
+  // 과거 인덱스 하드코딩(상태=11·인원=8) 탓에 컬럼이 밀리자 마감 공고가 계속 "진행 중"으로 남던 버그가 있었음.
+  // 헤더/열을 못 찾으면 실측 인덱스로 폴백. 헤더행은 "Job ID" 가 있는 행으로 탐지.
+  const jdHeaderIdx = jdSheet.findIndex((r: any[]) => r.some((c: any) => /job\s*id/i.test(String(c || ''))))
+  const jdH: any[] = jdHeaderIdx >= 0 ? jdSheet[jdHeaderIdx] : []
+  const jdCol = (re: RegExp, fallback: number) => {
+    const i = jdH.findIndex((c: any) => re.test(String(c || '').replace(/\n/g, ' ').trim()))
+    return i >= 0 ? i : fallback
+  }
+  const JC = {
+    code: jdCol(/job\s*id/i, 0),
+    company: jdCol(/company/i, 1),
+    title: jdCol(/job\s*title/i, 2),
+    headcount: jdCol(/headcount/i, 6),
+    status: jdCol(/job\s*status/i, 9),
+  }
+  const jdDataRows = jdHeaderIdx >= 0 ? jdSheet.slice(jdHeaderIdx + 1) : jdSheet.slice(3)
+  const jds: JdRow[] = jdDataRows
+    .filter((r: any[]) => String(r[JC.code] || '').trim())
     .map((r: any[]) => {
-      const code = String(r[0]).trim()
+      const code = String(r[JC.code]).trim()
       const agg = perJd[code] || { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0 }
-      // JD EXECUTION 헤더 실측: A(0)Job ID · B(1)Company · C(2)Job Title · G(6)Headcount ·
-      // I(8)Recruitment period · J(9)Job Status · L(11)FYI page. 상태=9, 인원=6 (이전 11/8 은
-      // FYI page·모집기간 열을 잘못 읽어 마감 공고가 계속 "진행 중"으로 남던 버그)
-      const status = String(r[9] || '').trim()
+      const status = String(r[JC.status] || '').trim()
       return {
         code,
-        company: String(r[1] || '').trim(),
-        title: String(r[2] || '').trim(),
-        headcount: parseInt(r[6]) || null,
+        company: String(r[JC.company] || '').trim(),
+        title: String(r[JC.title] || '').trim(),
+        headcount: parseInt(r[JC.headcount]) || null,
         status,
         open: !CLOSED_RE.test(status),
         apps: agg.apps, people: agg.people, docPass: agg.docPass,
