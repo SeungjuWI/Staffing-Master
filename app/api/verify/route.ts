@@ -61,10 +61,10 @@ export async function GET() {
   const resume = await cnt(fyi, 'user_profiles', q => q.not('resume_url', 'is', null))
   const resumePublic = await cnt(fyi, 'user_profiles', q => q.not('resume_url', 'is', null).eq('is_resume_public', true))
 
-  const ktcJobs = await fetchAll<any>(fyi, 'jobs', 'id', q => q.eq('source', 'ktc'))
+  const ktcJobs = await fetchAll<any>(fyi, 'jobs', 'id, title, company, source_id, is_active', q => q.eq('source', 'ktc'))
   let fyiApps: any[] = []
   for (let i = 0; i < ktcJobs.length; i += 50) {
-    fyiApps = fyiApps.concat(await fetchAll<any>(fyi, 'job_applications', 'applicant_email', q => q.in('job_id', ktcJobs.slice(i, i + 50).map(j => j.id))))
+    fyiApps = fyiApps.concat(await fetchAll<any>(fyi, 'job_applications', 'applicant_email, job_id', q => q.in('job_id', ktcJobs.slice(i, i + 50).map(j => j.id))))
   }
   fyiApps = fyiApps.filter(a => a.applicant_email && !String(a.applicant_email).toLowerCase().endsWith('@likelion.net'))
   const fyiUniq = new Set(fyiApps.map(a => String(a.applicant_email).toLowerCase())).size
@@ -100,9 +100,19 @@ export async function GET() {
   const MASTER = process.env.MASTER_SHEET_ID || '1mR1_-a3LmjxAbbox3tTKBu6WYwDbfBYKmPB6TP9EnKI'
   const OPS = process.env.KTC_OPS_SHEET_ID || '1opr9KoR7KRZ31CJDNGM63xbA2rPZjPuNaG6eeLPTXjM'
 
-  let jdTotal = 0, jdOpen = 0, headcountOpen = 0, ivPeople = 0
+  let jdTotal = 0, jdOpen = 0, headcountOpen = 0, ivPeople = 0, ivNoCodeRows = 0
   let empTotal = 0, empIng = 0, empAttributed = 0, revSum = 0, profitSum = 0
   let finalPassedNotInEmp = 0
+  // 공고별 지원 크로스소스 대조 재료 (2026-07-28 FPT403 맹점 재발 방지 —
+  // FYI 직접 지원이 공고별 표시에서 통째로 빠졌는데 총계 검사만으론 안 잡혔음)
+  const normT = (s: unknown) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim()
+  const alnT = (s: unknown) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const simpT = (s: unknown) => normT(String(s || '').replace(/\([^)]*\)/g, ' ').split(' - ')[0])
+  const jdTitleToCode: Record<string, string | null> = {}
+  const jdIndex: { code: string; comp: string; title: string }[] = []
+  const jdOpenCodes = new Set<string>()
+  const sheetAppsByCode: Record<string, number> = {}
+  let sheetAppsNoCode = 0
   // 상세 명단 (운영 조치용)
   const fpNotInEmpList: any[] = []
   const revenueStatus: any[] = []
@@ -122,12 +132,18 @@ export async function GET() {
       const i = jdHdr.findIndex((c: any) => re.test(String(c || '').replace(/\n/g, ' ').trim()))
       return i >= 0 ? i : fb
     }
-    const JCcode = jdc(/job\s*id/i, 0), JCcount = jdc(/headcount/i, 6), JCstatus = jdc(/job\s*status/i, 9)
+    const JCcode = jdc(/job\s*id/i, 0), JCcount = jdc(/headcount/i, 6), JCstatus = jdc(/job\s*status/i, 9), JCtitle = jdc(/job\s*title/i, 2), JCcomp = jdc(/company/i, 1)
     for (const r of jdRows.slice(jdHdrIdx >= 0 ? jdHdrIdx + 1 : 3)) {
-      if (!String(r[JCcode] || '').trim()) continue
+      const code = String(r[JCcode] || '').trim()
+      if (!code) continue
       jdTotal++
+      // FYI 공고 → 코드 매칭용 (aggregate 의 fyiCodeForJob 과 동일 규칙)
+      const t = normT(r[JCtitle])
+      if (t) jdTitleToCode[t] = jdTitleToCode[t] === undefined ? code : null
+      jdIndex.push({ code, comp: alnT(r[JCcomp]), title: simpT(r[JCtitle]) })
       if (!CLOSED_RE.test(String(r[JCstatus] || '').trim())) {
         jdOpen++
+        jdOpenCodes.add(code)
         headcountOpen += parseInt(r[JCcount]) || 0
       }
     }
@@ -135,6 +151,7 @@ export async function GET() {
     for (const r of ivRows.slice(2)) {
       const name = String(r[1] || '').trim()
       if (!name) continue
+      if (!/[A-Z]{2,6}\d{3,4}/.test(String(r[13] || ''))) ivNoCodeRows++ // 공고코드 없는 면접 행 = 공고별 면접 누락 풀
       const key = String(r[2] || '').trim().toLowerCase() || name
       if (!seen.has(key)) { seen.add(key); ivPeople++ }
     }
@@ -224,6 +241,9 @@ export async function GET() {
         const H: string[] = (rows[hIdx] || []).map((c: any) => String(c || '').replace(/\n/g, ' ').trim())
         const eCol = H.findIndex(h => /e-?mail/i.test(h))
         const nCol = H.findIndex(h => /name|họ|tên/i.test(h))
+        const cCol = H.findIndex(h => /job\s*id/i.test(h))
+        const jCol = H.findIndex(h => /applied\s*job|job\s*title|^job$|vị trí/i.test(h))
+        const codeOf = (s: string) => (s.trim().match(/^([A-Z]{2,6}\d{3,4})/) || [])[1] || null
         let apps = 0
         const emails = new Set<string>()
         for (const r of rows.slice(hIdx + 1)) {
@@ -232,6 +252,10 @@ export async function GET() {
           if (!name && !email) continue
           apps++
           if (email) emails.add(email)
+          // 공고별 대조용: aggregate 의 parseAppSheet 와 같은 규칙(코드열 → 직무 텍스트 앞머리)
+          const code = codeOf(cCol >= 0 ? String(r[cCol] || '') : '') || codeOf(jCol >= 0 ? String(r[jCol] || '') : '')
+          if (code) sheetAppsByCode[code] = (sheetAppsByCode[code] || 0) + 1
+          else sheetAppsNoCode++
         }
         total += apps
         const inPipe = [...emails].filter(e => candEmails.has(e)).length
@@ -246,8 +270,70 @@ export async function GET() {
       sheetAppsTotal = null // 시트 실패 시 재적재본 기준으로 폴백 (대시보드 폴백과 동일 방향)
     }
   }
+  // FYI 라이브 지원도 같은 대조에 포함 — 시트 탭이 아니라 탭별 재집계 대상은 아니지만,
+  // FYI 지원자가 파이프라인에 안 들어오는 갭(2026-07-28 실사례: 19명, 6~7월 집중)을 상시 감시한다
+  {
+    const uniqFyi = [...new Set(fyiApps.map(a => String(a.applicant_email).toLowerCase()))]
+    const inPipe = uniqFyi.filter(e => candEmails.has(e)).length
+    tabStats.push({
+      탭: 'FYI(라이브)', 지원건: fyiApps.length, 고유이메일: uniqFyi.length,
+      파이프라인유입: inPipe, 파이프라인미유입: uniqFyi.length - inPipe,
+      candidates소스인원: candBySource.FYI || 0,
+    })
+  }
   // 시트 탭에 지원이 쌓이는데 파이프라인에 이메일이 안 들어온 탭 = 스크리닝 누락 위험
   const tabsMissingPipeline = tabStats.filter(t => t.파이프라인미유입 > 0)
+
+  // ── 공고별 지원 크로스소스 대조 (모집 중 공고 전수) ────────────────
+  // 대시보드 공고별 '지원' = 시트 탭 코드 귀속 + FYI 라이브 제목 매칭. 여기서 같은 재료를
+  // 독립 재집계해 공고 단위로 비교한다 — 총계만 보다가 FPT403(FYI 지원 15건이 0으로 표시)을
+  // 놓친 부류의 맹점을 기계적으로 잡기 위함. 라이브 시트라 공고당 ±2건은 허용.
+  const fyiJobById: Record<string, { title: string; company: string; sourceId: string; active: boolean }> = {}
+  for (const j of ktcJobs) fyiJobById[j.id] = { title: String(j.title || ''), company: String(j.company || ''), sourceId: String(j.source_id || ''), active: !!j.is_active }
+  // aggregate 의 fyiCodeForJob 과 동일: ① source_id 앞머리 코드 ② 제목 유니크(회사 가드) ③ 회사+제목 유사
+  const fyiCode = (job: { title: string; company: string; sourceId: string }): string | null => {
+    const jc = alnT(job.company)
+    const compMatch = (c: string) => c === jc || (c.length >= 4 && jc.length >= 4 && (c.includes(jc) || jc.includes(c)))
+    const fromId = (job.sourceId.match(/^([A-Z]{2,6}\d{3,4})/) || [])[1]
+    if (fromId) return fromId
+    const exact = jdTitleToCode[normT(job.title)]
+    if (exact) {
+      const owner = jdIndex.find(x => x.code === exact)
+      if (!jc || !owner?.comp || compMatch(owner.comp)) return exact
+    }
+    const jt = simpT(job.title)
+    const cands = jdIndex.filter(x => x.comp && jc && compMatch(x.comp))
+    const strong = cands.filter(x => x.title === jt || (jt && (x.title.includes(jt) || jt.includes(x.title))))
+    const p3 = (s: string) => s.split(' ').slice(0, 3).join(' ')
+    const weak = cands.filter(x => p3(x.title) === p3(jt))
+    const hit = strong.length ? strong : weak
+    return new Set(hit.map(x => x.code)).size === 1 && hit.length ? hit[0].code : null
+  }
+  const fyiAppsByCode: Record<string, number> = {}
+  const fyiUnattrByTitle: Record<string, { count: number; active: boolean }> = {}
+  for (const a of fyiApps) {
+    const job = fyiJobById[a.job_id]
+    const code = job ? fyiCode(job) : null
+    if (code) fyiAppsByCode[code] = (fyiAppsByCode[code] || 0) + 1
+    else if (job) {
+      const u = fyiUnattrByTitle[job.title] || (fyiUnattrByTitle[job.title] = { count: 0, active: job.active })
+      u.count++
+    }
+  }
+  const jdAppsMismatch: any[] = []
+  for (const j of d.matching.jds) {
+    if (!j.open) continue
+    const expected = (sheetAppsByCode[j.code] || 0) + (fyiAppsByCode[j.code] || 0)
+    if (Math.abs(j.apps - expected) > 2) {
+      jdAppsMismatch.push({ 공고: j.code, 대시보드: j.apps, 시트재집계: sheetAppsByCode[j.code] || 0, FYI재집계: fyiAppsByCode[j.code] || 0 })
+    }
+  }
+  // 어디에도 귀속 안 된 지원 풀 — 여기 쌓이는 것들이 다음 맹점 후보다 (모집 중 공고면 특히)
+  const fyiUnattrList = Object.entries(fyiUnattrByTitle)
+    .map(([title, v]) => ({ 공고제목: title, 지원건: v.count, 모집중: v.active }))
+    .sort((a, b) => Number(b.모집중) - Number(a.모집중) || b.지원건 - a.지원건)
+    .slice(0, 12)
+  const fyiUnattrActive = fyiUnattrList.filter(x => x.모집중).reduce((s, x) => s + x.지원건, 0)
 
   // 구 상태값 잔존 인원 명단
   const legacyList = (await fetchAll<any>(ktc, 'candidates', 'full_name, email, sheet_source, applied_job, applied_company', q => q.eq('pipeline_status', 'ai_interview_passed')))
@@ -281,9 +367,12 @@ export async function GET() {
     { name: '인재풀 이력서', dashboard: d.supply.talentPoolResume, source: resume, note: '' },
     { name: '인재풀 공개', dashboard: d.supply.talentPoolPublic, source: resumePublic, note: '' },
     { name: '진행중: 스크리닝 대기', dashboard: d.matching.inProgress.screeningQueue, source: st.new || 0, note: '' },
+    { name: '진행중: 합격 후 대기', dashboard: d.matching.inProgress.screenPassed, source: st.passed || 0, note: '' },
     { name: '진행중: 발송 대기', dashboard: d.matching.inProgress.readyToForward, source: st.ready_to_forward || 0, note: '' },
     { name: '진행중: 기업 검토', dashboard: d.matching.inProgress.sentToCompany, source: st.sent_to_company || 0, note: '' },
     { name: '진행중: 면접', dashboard: d.matching.inProgress.interviewing, source: st.interviewing || 0, note: '' },
+    { name: '공고별 지원 대조 불일치 (모집 중, ±2 허용)', dashboard: jdAppsMismatch.length, source: 0, note: '시트 코드 귀속 + FYI 제목 매칭 독립 재집계와 공고 단위 비교' },
+    { name: 'FYI 지원 공고미귀속 (모집 중 공고)', dashboard: fyiUnattrActive, source: 0, note: '모집 중인 FYI 공고인데 원장 제목과 매칭 실패 — 공고별 표시 누락 위험 (상세 details)' },
     { name: '공고 수 (전체)', dashboard: d.matching.jds.length, source: jdTotal, note: 'JD EXECUTION 재집계' },
     { name: '오픈 공고', dashboard: d.matching.openJds, source: jdOpen, note: '' },
     { name: '오픈 공고 TO 합', dashboard: d.matching.headcountTotal, source: headcountOpen, note: '' },
@@ -332,6 +421,12 @@ export async function GET() {
       // 탭별 지원 건 + 파이프라인 유입 대조 — 미유입>0 이면 최근 지원 대기(동기화 지연) 또는 동기화 대상 누락
       시트탭별_지원건_파이프라인유입: tabStats,
       파이프라인_미유입_있는_탭: tabsMissingPipeline.map(t => t.탭),
+      // 공고별 크로스소스 대조 (FPT403 재발 방지) — 불일치·미귀속 풀이 다음 맹점 후보
+      공고별_지원_불일치: jdAppsMismatch,
+      FYI_공고별_귀속_상위: Object.entries(fyiAppsByCode).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([c, n]) => ({ 공고: c, FYI지원: n })),
+      FYI_공고미귀속_지원: fyiUnattrList,
+      시트_코드미귀속_지원건: sheetAppsNoCode,
+      면접_공고코드_없는_행: ivNoCodeRows,
     },
     checks,
   })

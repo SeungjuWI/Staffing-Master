@@ -15,11 +15,12 @@ export type Channel = {
   costPerHireKrw: number | null // 채용당 비용 = 지출 ÷ 입사
 }
 
-// 공고 판정 — 진행 중 공고만 (마감은 null)
-//  good  순항: 충원 완료거나, 지금 기업 검토·면접·오퍼 단계에 사람이 있음
-//  early 모집 초기: 수주 14일 미만 (판정 유예)
-//  low   지원 부족: TO 1명당 지원 30명 미만 (입사가 나온 공고들의 하위 사분위 기준)
-//  stall 정체: 지원은 충분한데 지금 기업 단계에 아무도 없음 (내부 적체)
+// 공고 판정 — 진행 중 공고만 (마감은 null). 2026-07-28 전수조사로 개정:
+//  good  순항: 충원 완료 / 면접·오퍼 진행 중 / 기업 검토 중인데 반응 이력(면접·입사)이 있거나 수주 6주 미만
+//  early 모집 초기: 수주 7일 미만 (판정 유예)
+//  low   지원 부족: TO 1명당 지원 30건 미만 (입사가 나온 공고들의 하위 사분위 기준)
+//  stall 정체: 기업 응답 없음(검토 체류만 있고 수주 6주+ 면접 전환 0) 또는 내부 처리 정체(기업 단계 0)
+//  (구 규칙은 "검토 체류 1명만 있어도 순항"이라 무반응 공고 12건이 순항으로 위장됐었음)
 export type JdHealth = 'good' | 'early' | 'low' | 'stall'
 
 export type JdRow = {
@@ -29,7 +30,8 @@ export type JdRow = {
   headcount: number | null // 채용 목표 인원 (TO)
   status: string         // JD EXECUTION 시트 status 원문
   open: boolean          // 진행 중 여부
-  apps: number           // 지원 건
+  apps: number           // 지원 건 (시트 탭 + FYI 라이브 — FYI 는 공고 제목 유니크 매칭으로 귀속)
+  appsFyi: number        // └ 그중 FYI 플랫폼 직접 지원 (시트에 없는 지원 — 툴팁 분해 표기용)
   people: number         // 지원자
   docPass: number        // 스크리닝 합격 도달
   delivered: number      // 기업 전달 도달
@@ -38,8 +40,12 @@ export type JdRow = {
   hires: number          // 입사
   startDate: string | null // 수주일 (시트 Date Received, 없으면 최초 지원일) YYYY-MM-DD
   days: number | null    // 수주 후 경과 일수
-  peopleAll: number      // 누적 지원자 — 판정·사유는 기간 필터와 무관하게 이 값 기준
-  curInternal: number    // 현재 내부 단계 인원 (스크리닝 대기·합격·발송 대기)
+  peopleAll: number      // 누적 지원자 (스톡 — 기간 필터 무관)
+  appsAll: number        // 누적 지원 건 (스톡) — 지원 부족 판정 재료 (화면 '지원' 열과 같은 시트 기준)
+  curInternal: number    // 현재 내부 단계 인원 (스크리닝 대기 + 합격 후 대기 + 발송 대기)
+  curNew: number         // └ 스크리닝 대기
+  curPassed: number      // └ 합격 후 대기 (발송 준비 전)
+  curReady: number       // └ 발송 대기
   curCompany: number     // 현재 기업 검토 중
   curInterview: number   // 현재 면접 진행 중
   curOffer: number       // 현재 오퍼·계약 중
@@ -100,8 +106,9 @@ export type MasterData = {
 
   matching: {
     funnel: FunnelStage[]       // 지원자 → 스크리닝 합격 → 기업 전달 → 면접 → 오퍼 → 입사
-    inProgress: {               // 현재 단계 기준 (지금 걸려 있는 인원)
+    inProgress: {               // 현재 단계 기준 (지금 걸려 있는 인원, 마감 공고 잔류 포함 전체)
       screeningQueue: number    // 스크리닝 대기
+      screenPassed: number      // 합격 후 대기 (스크리닝 합격, 발송 준비 전)
       readyToForward: number    // 발송 대기
       sentToCompany: number     // 기업 검토 중
       interviewing: number      // 면접 진행 중

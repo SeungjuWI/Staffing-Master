@@ -315,29 +315,44 @@ async function Dashboard({
           <section className="section">
             <div className="section-head">
               <h2>지금 진행 중</h2>
-              <span className="sub">현재 각 단계에 걸려 있는 인원</span>
+              <span className="sub">각 단계에 걸려 있는 인원 — 아랫줄은 모집 중 공고 몫, 호버하면 최다 공고</span>
             </div>
             <div className="strip">
-              <div className="cell">
-                <div className="label">스크리닝 대기</div>
-                <div className="value">{fmtInt(p.screeningQueue)}</div>
-              </div>
-              <div className="cell">
-                <div className="label">발송 대기</div>
-                <div className="value">{fmtInt(p.readyToForward)}</div>
-              </div>
-              <div className="cell">
-                <div className="label">기업 검토 중</div>
-                <div className="value">{fmtInt(p.sentToCompany)}</div>
-              </div>
-              <div className="cell">
-                <div className="label">면접 진행 중</div>
-                <div className="value">{fmtInt(p.interviewing)}</div>
-              </div>
-              <div className="cell">
-                <div className="label">오퍼·계약 중</div>
-                <div className="value">{fmtInt(p.offer)}</div>
-              </div>
+              {(() => {
+                // 단계별: 전체(마감 잔류 포함) 큰 숫자 + 모집 중 공고 몫 + 최다 공고 툴팁.
+                // 마감 공고에 남은 상태값(예: 검토 중 232명)이 커서, 액션 가능한 몫을 분리해 보여준다.
+                type J = (typeof openJds)[number]
+                const stages: { label: string; total: number; of: (j: J) => number; hint?: string }[] = [
+                  { label: '스크리닝 대기', total: p.screeningQueue, of: j => j.curNew },
+                  { label: '합격 후 대기', total: p.screenPassed, of: j => j.curPassed, hint: '스크리닝은 합격했는데 아직 발송 준비에 들어가지 않은 인원' },
+                  { label: '발송 대기', total: p.readyToForward, of: j => j.curReady },
+                  { label: '기업 검토 중', total: p.sentToCompany, of: j => j.curCompany },
+                  { label: '면접 진행 중', total: p.interviewing, of: j => j.curInterview },
+                  { label: '오퍼·계약 중', total: p.offer, of: j => j.curOffer },
+                ]
+                return stages.map(s => {
+                  const inOpen = openJds.reduce((n, j) => n + s.of(j), 0)
+                  const top = openJds.reduce<J | null>((b, j) => (s.of(j) > (b ? s.of(b) : 0) ? j : b), null)
+                  const rest = Math.max(0, s.total - inOpen)
+                  const title = [
+                    s.hint,
+                    top && s.of(top) > 0 ? `모집 중 최다: ${top.company} ${top.code} — ${fmtInt(s.of(top))}명` : null,
+                    rest > 0 ? `'그 외'는 마감 공고 잔류·공고 미귀속 인원` : null,
+                  ]
+                    .filter(Boolean)
+                    .join('\n')
+                  return (
+                    <div className="cell" key={s.label} title={title || undefined}>
+                      <div className="label">{s.label}</div>
+                      <div className="value">{fmtInt(s.total)}</div>
+                      <div className="sub">
+                        모집 중 {fmtInt(inOpen)}
+                        {rest > 0 && <span className="dim"> · 그 외 {fmtInt(rest)}</span>}
+                      </div>
+                    </div>
+                  )
+                })
+              })()}
             </div>
           </section>
 
@@ -514,17 +529,25 @@ async function Dashboard({
               <div>
                 <dt>공고 판정</dt>
                 <dd>
-                  순항 = 충원 완료 또는 기업 검토·면접·오퍼 진행 인원 있음 · 정체 = 지원은 충분한데 기업 단계 진행 0 ·
-                  지원 부족 = TO 1명당 지원 30명 미만 · 모집 초기 = 수주 2주 미만 (판정 유예)
+                  순항 = 충원 완료, 면접·오퍼 진행, 또는 기업 검토 중(면접·입사 이력이 있거나 수주 6주 미만) ·
+                  정체 = 수주 6주 넘도록 기업 반응(면접 전환) 0이거나 기업 단계에 아무도 없음 ·
+                  지원 부족 = TO 1명당 지원 30건 미만 · 모집 초기 = 수주 1주 미만 (판정 유예)
                 </dd>
               </div>
               <div>
-                <dt>TO당 지원 30명</dt>
-                <dd>지원 부족의 기준선 — 입사가 성사된 공고들의 TO당 지원자 실측 (최소 9 ~ 중앙값 61명)의 하위 사분위 수준</dd>
+                <dt>TO당 지원 30건</dt>
+                <dd>지원 부족의 기준선 — 입사가 성사된 공고들의 TO당 지원 건 실측 (최소 17 ~ 중앙값 58건)의 하위 사분위 수준</dd>
               </div>
               <div>
                 <dt>진행 인원</dt>
-                <dd>지금 그 단계에 걸려 있는 인원 (현재 상태 기준, 도달 누적 아님)</dd>
+                <dd>
+                  지금 그 단계에 걸려 있는 인원 (현재 상태 기준, 도달 누적 아님) — 스트립의 큰 숫자는 마감 공고
+                  잔류·공고 미귀속 포함 전체, 아랫줄 "모집 중"이 지금 액션 가능한 몫
+                </dd>
+              </div>
+              <div>
+                <dt>합격 후 대기</dt>
+                <dd>스크리닝에 합격했지만 아직 기업 발송 준비(발송 대기)로 넘어가지 않은 인원</dd>
               </div>
               <div>
                 <dt>지원자당 비용</dt>

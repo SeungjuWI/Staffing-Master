@@ -161,10 +161,10 @@ export function ChannelTable({ channels }: { channels: Channel[] }) {
 // ── 공고 판정 어휘 — aggregate 의 JdHealth 규칙과 짝 (용어 탭에 정의 문서화) ──
 // desc 는 호버 툴팁으로 노출 — 기준을 화면에서 바로 확인할 수 있게
 export const HEALTH_META: Record<JdHealth, { label: string; desc: string }> = {
-  good: { label: '순항', desc: '충원을 완료했거나, 지금 기업 검토·면접·오퍼 단계에 진행 중인 인원이 있는 공고' },
-  stall: { label: '정체', desc: '지원은 충분한데(TO당 30명 이상) 지금 기업 단계에 아무도 없는 공고 — 내부 처리 적체' },
-  low: { label: '지원 부족', desc: 'TO 1명당 지원 30명 미만 — 입사가 성사된 공고들의 실측 하위 수준 (TO당 최소 9 ~ 중앙값 61명)' },
-  early: { label: '모집 초기', desc: '수주 2주 미만 — 아직 판정하지 않음 (유예)' },
+  good: { label: '순항', desc: '충원 완료 / 면접·오퍼 진행 중 / 기업 검토 중(면접·입사 이력이 있거나 수주 6주 미만인 공고)' },
+  stall: { label: '정체', desc: '멈춘 공고 — 수주 6주가 지나도록 기업 반응(면접 전환)이 한 번도 없거나, 기업 단계에 아무도 없이 내부에만 쌓여 있음' },
+  low: { label: '지원 부족', desc: 'TO 1명당 지원 30건 미만 — 입사가 성사된 공고들의 실측 하위 수준 (TO당 최소 17 ~ 중앙값 58건)' },
+  early: { label: '모집 초기', desc: '수주 1주 미만 — 아직 판정하지 않음 (유예)' },
 }
 const HEALTH_ORDER: JdHealth[] = ['good', 'stall', 'low', 'early']
 

@@ -17,13 +17,19 @@ const SEL_KEY = 'sm-jd-sel-v1'
 const SEL_ONLY_KEY = 'sm-jd-sel-only-v1'
 
 // 판정 사유 한 줄 — 문제 공고(정체·부족·초기)의 호버 툴팁 (숫자는 현재 걸려 있는 인원, 누적 아님)
+// 정체는 병목 위치를 함께 말한다: 기업 응답 없음(검토 체류만) vs 내부 처리(기업 단계 0)
 function healthNote(j: JdRow): string {
-  if (j.health === 'stall') return `지원자는 충분한데 지금 기업 단계 진행 0명 · 내부 대기 ${fmtInt(j.curInternal)}명`
+  if (j.health === 'stall') {
+    const weeks = j.days != null ? Math.max(1, Math.ceil(j.days / 7)) : null
+    return j.curCompany > 0
+      ? `기업 응답 없음 — 검토 체류 ${fmtInt(j.curCompany)}명, 수주 ${weeks != null ? `${fmtInt(weeks)}주차` : '이후'}인데 면접 전환 0`
+      : `내부 처리 정체 — 합격 후 대기 ${fmtInt(j.curPassed)}명 · 발송 대기 ${fmtInt(j.curReady)}명, 기업 단계 0명`
+  }
   if (j.health === 'low')
-    return j.peopleAll === 0
-      ? '지원 0명 (기준: TO당 30명)'
-      : `TO당 지원 ${fmtInt(Math.round(j.peopleAll / (j.headcount || 1)))}명뿐 (기준: TO당 30명)`
-  if (j.health === 'early') return `수주 ${fmtInt(j.days ?? 0)}일째 — 2주까지 판정 유예`
+    return j.appsAll === 0
+      ? '지원 0건 (기준: TO당 30건)'
+      : `TO당 지원 ${fmtInt(Math.round(j.appsAll / (j.headcount || 1)))}건뿐 (기준: TO당 30건)`
+  if (j.health === 'early') return `수주 ${fmtInt(j.days ?? 0)}일째 — 1주까지 판정 유예`
   return ''
 }
 
@@ -208,8 +214,13 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                       </td>
                     )}
                     <td>{j.headcount != null ? fmtInt(j.headcount) : <span className="dim">–</span>}</td>
-                    {/* 주 숫자는 시트(CANDIDATE DATA) 기준 지원 건 — 운영이 시트와 대조하는 숫자와 일치해야 한다 */}
-                    <td title={`지원 ${fmtInt(j.apps)}건 (시트 기준) · 고유 지원자 ${fmtInt(j.people)}명 · 오퍼 도달 ${fmtInt(j.offer)}명`}>
+                    {/* 주 숫자 = 시트(CANDIDATE DATA) 지원 건 + FYI 직접 지원(시트에 없음 — 제목 매칭 귀속).
+                        FYI 몫이 있으면 툴팁에 분해해 운영이 시트와 대조할 때 헷갈리지 않게 한다 */}
+                    <td
+                      title={`지원 ${fmtInt(j.apps)}건${
+                        j.appsFyi > 0 ? ` — 시트 ${fmtInt(j.apps - j.appsFyi)} + FYI 직접 ${fmtInt(j.appsFyi)}` : ' (시트 기준)'
+                      } · 고유 지원자 ${fmtInt(j.people)}명 · 오퍼 도달 ${fmtInt(j.offer)}명`}
+                    >
                       {fmtInt(j.apps)}
                     </td>
                     <td>{fmtInt(j.docPass)}</td>

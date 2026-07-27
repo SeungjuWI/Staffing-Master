@@ -86,10 +86,14 @@ function parseReceived(raw: unknown, firstAppIso: string | null, nowMs: number):
   return mk(b, a) || pool[0]
 }
 
-// TO 1명당 지원 30명 = "정상선" — 입사가 성사된 공고 15건의 TO당 지원자가
-// 최소 9 ~ 중앙값 61이고 하위 사분위가 ~28명 (2026-07 실측). 이보다 낮으면 지원 부족.
+// TO 1명당 지원 30건 = "정상선" — 입사가 성사된 공고 18건의 TO당 지원 건이
+// 최소 17 ~ 중앙값 58이고 하위 사분위가 ~33건 (2026-07-28 재실측). 이보다 낮으면 지원 부족.
+// (판정 재료는 화면 '지원' 열과 같은 시트 기준 지원 건 — 지원자 수 기준이던 것을 07-28 통일)
 const APPS_PER_TO_FLOOR = 30
-const EARLY_DAYS = 14 // 수주 2주 미만은 판정 유예 (모집 초기)
+const EARLY_DAYS = 7 // 수주 1주 미만은 판정 유예 (모집 초기) — 2주는 길다는 대표 피드백으로 07-28 단축
+// 기업 검토 체류만 있고 면접·입사 이력이 전무한 공고의 "무반응 정체" 경계 — 전수조사에서
+// 무반응 공고의 수주 주차가 2~4주와 8~12주로 갈라져(중간 공백) 6주를 경계로 삼음 (2026-07-28)
+const NO_RESPONSE_DAYS = 42
 
 // VN(UTC+7) 기준 YYYY-MM
 const toVNMonth = (iso: string) => new Date(new Date(iso).getTime() + 7 * 3600000).toISOString().slice(0, 7)
@@ -223,6 +227,7 @@ type Raw = {
   empSheet: any[][]
   revSheet: any[][]
   fyiApps: any[]
+  fyiJobById: Record<string, { title: string; company: string; sourceId: string }> // FYI 공고 id → 제목·회사·공고코드(source_id)
   vnJobs: any[]
   vnApps: any[]
   cost: CostData | null
@@ -298,16 +303,23 @@ async function fetchRaw(): Promise<Raw> {
   const pMaster = grab('Master 시트(공고·면접)', () => batchGet(MASTER_SHEET_ID, ["'JD EXECUTION'!A1:N", "'INTERVIEW'!A1:N"]), [[], []])
   const pOps = grab('KTC Ops 시트(입사·매출)', () => batchGet(KTC_OPS_SHEET_ID, ["'Employee'!A1:T", "'매출현황'!A1:N"]), [[], []])
 
-  // FYI(KTC 공고) 지원자 — salarymap 라이브
+  // FYI(KTC 공고) 지원자 — salarymap 라이브. 공고 제목도 함께 가져와 공고별 귀속에 쓴다
+  // (FYI 직접 지원은 시트 탭에 없어서, 제목 매칭 없이는 공고별 '지원'에서 통째로 빠진다 —
+  //  실사례: FPT403이 FYI 지원 16건을 받고도 대시보드에 0건으로 떠서 대표가 오판할 뻔함, 2026-07-28)
   const pFyiApps = grab('FYI 지원', async () => {
-    const jobs = await fetchAll<any>(fyi, 'jobs', 'id', q => q.eq('source', 'ktc'))
+    const jobs = await fetchAll<any>(fyi, 'jobs', 'id, title, company, source_id', q => q.eq('source', 'ktc'))
+    const byId: Record<string, { title: string; company: string; sourceId: string }> = {}
+    for (const j of jobs) byId[j.id] = { title: String(j.title || ''), company: String(j.company || ''), sourceId: String(j.source_id || '') }
     const ids = jobs.map(j => j.id)
     let apps: any[] = []
     for (let i = 0; i < ids.length; i += 50) {
-      apps = apps.concat(await fetchAll<any>(fyi, 'job_applications', 'applicant_email, created_at', q => q.in('job_id', ids.slice(i, i + 50))))
+      apps = apps.concat(await fetchAll<any>(fyi, 'job_applications', 'applicant_email, created_at, job_id', q => q.in('job_id', ids.slice(i, i + 50))))
     }
-    return apps.filter(a => a.applicant_email && !String(a.applicant_email).toLowerCase().endsWith('@likelion.net'))
-  }, [])
+    return {
+      fyiApps: apps.filter(a => a.applicant_email && !String(a.applicant_email).toLowerCase().endsWith('@likelion.net')),
+      fyiJobById: byId,
+    }
+  }, { fyiApps: [] as any[], fyiJobById: {} as Record<string, { title: string; company: string; sourceId: string }> })
 
   // 베트남 매칭 트랙 (FYI 자체 공고 — ktc-support 미경유)
   const pVn = grab('베트남 매칭(FYI 자체 공고)', async () => {
@@ -332,8 +344,14 @@ async function fetchRaw(): Promise<Raw> {
     const cmpTab = findTab('통합 비교표'), metaTab = findTab('캠페인별'), invTab = findTab('invoice')
     if (!cmpTab || !metaTab || !invTab) throw new Error(`탭 탐지 실패 (비교표:${cmpTab} 캠페인:${metaTab} 인보이스:${invTab})`)
     const liTab = tabs.find((t: string) => t.toUpperCase().includes('LINKEDIN'))
-    const ranges = [`'${cmpTab}'!A1:M15`, `'${metaTab}'!A1:H60`, `'${invTab}'!A1:S30`, ...(liTab ? [`'${liTab}'!A1:N120`] : [])]
-    const [cmpRows, metaRows, invRows, liRows] = await batchGet(COST_SHEET_ID, ranges)
+    const sumTab = findTab('campaign-summary') // 12. meta-campaign-summary — 캠페인 분류 원장
+    const ranges = [`'${cmpTab}'!A1:M15`, `'${metaTab}'!A1:H60`, `'${invTab}'!A1:S30`]
+    const liIdx = liTab ? ranges.push(`'${liTab}'!A1:N120`) - 1 : -1
+    const sumIdx = sumTab ? ranges.push(`'${sumTab}'!A1:M60`) - 1 : -1
+    const got = await batchGet(COST_SHEET_ID, ranges)
+    const [cmpRows, metaRows, invRows] = got
+    const liRows = liIdx >= 0 ? got[liIdx] : []
+    const sumRows = sumIdx >= 0 ? got[sumIdx] : []
 
     const hIdx = cmpRows.findIndex((r: any[]) => r.some(c => String(c || '').trim() === '채널') && r.some(c => String(c || '').startsWith('지출')))
     const spendByChannel: Record<string, number> = {}
@@ -400,7 +418,29 @@ async function fetchRaw(): Promise<Raw> {
         }
       }
     }
-    // Meta 광고비 분해: KTC* = 랜딩, FYI_*KTC* = FYI 경유
+    // Meta 광고비 분해 — 채용 마케팅비 포함 여부의 진실 원천은 12. meta-campaign-summary 탭의
+    // 'Recruiting for KTC'(yes/no) 열 (2026-07-28 Alice 확인: 행사 캠페인 Mentoring·Hackathon·July-Event
+    // 는 KTC 지원자 모집 목적 = 포함, Launch-App 앱 설치는 제외). 원장에 아직 없는 신규 캠페인은
+    // 이름 규칙(KTC* 또는 FYI_*KTC*)으로 폴백. 채널 배분은 이름 접두: FYI_* = FYI 경유, 그 외 = 랜딩.
+    // 캠페인명이 탭마다 달라(…_MT-lead_·_bud:aso 접미 유무) "앞 두 세그먼트 + 최장 숫자열" 키로 맞춘다.
+    const campaignKey = (s: string) => {
+      const segs = s.split('_').map(x => x.toLowerCase().replace(/[^a-z0-9]/g, ''))
+      const digits = (s.match(/\d+/g) || []).sort((a, b) => b.length - a.length)[0] || ''
+      return `${(segs[0] || '') + (segs[1] || '')}|${digits}`
+    }
+    const ktcRecruitByKey: Record<string, boolean> = {}
+    const sIdx = sumRows.findIndex((r: any[]) => r.some(c => String(c || '').trim() === 'Campaign') && r.some(c => /^recruiting/i.test(String(c || '').trim())))
+    if (sIdx >= 0) {
+      const SH = sumRows[sIdx]
+      const sNameCol = SH.findIndex((c: any) => String(c || '').trim() === 'Campaign')
+      const sFlagCol = SH.findIndex((c: any) => /^recruiting/i.test(String(c || '').trim()))
+      for (const r of sumRows.slice(sIdx + 1)) {
+        const name = String(r[sNameCol] || '').trim()
+        const flag = String(r[sFlagCol] || '').trim().toLowerCase()
+        if (!name || name === 'TOTAL' || (flag !== 'yes' && flag !== 'no')) continue
+        ktcRecruitByKey[campaignKey(name)] = flag === 'yes'
+      }
+    }
     let ktcMeta = 0, fyiKtcMeta = 0
     const mIdx = metaRows.findIndex((r: any[]) => r.some(c => String(c || '').trim() === 'Campaign') && r.some(c => String(c || '').startsWith('Spend')))
     if (mIdx >= 0) {
@@ -410,19 +450,23 @@ async function fetchRaw(): Promise<Raw> {
       for (const r of metaRows.slice(mIdx + 1)) {
         const name = String(r[mNameCol] || '').trim()
         const spend = parseKrw(r[mSpendCol])
-        if (spend == null) continue
-        if (/^ktc/i.test(name)) ktcMeta += spend
-        else if (/^fyi/i.test(name) && /ktc/i.test(name)) fyiKtcMeta += spend
+        if (!name || spend == null) continue
+        const ledger = ktcRecruitByKey[campaignKey(name)]
+        const isRecruit = ledger != null ? ledger : /^ktc/i.test(name) || (/^fyi/i.test(name) && /ktc/i.test(name))
+        if (!isRecruit) continue
+        if (/^fyi/i.test(name)) fyiKtcMeta += spend
+        else ktcMeta += spend
       }
     }
     return { spendByChannel, postedByChannel, ktcMeta, fyiKtcMeta }
   }, null) : Promise.resolve<CostData | null>(null)
 
   // 위에서 띄운 promise 를 전부 한 번에 대기 (콜드 fetch = 가장 느린 1개 시간)
-  const [candidates, applications, resumeCount, publicCount, master, ops, fyiApps, vn, cost] =
+  const [candidates, applications, resumeCount, publicCount, master, ops, fyiWrap, vn, cost] =
     await Promise.all([pCandidates, pApplications, pResume, pPublic, pMaster, pOps, pFyiApps, pVn, pCost])
   const [jdSheet, ivSheet] = master
   const [empSheet, revSheet] = ops
+  const { fyiApps, fyiJobById } = fyiWrap
   const { vnJobs, vnApps } = vn
 
   // 파이프라인 동기화 지연 감지 — 시트(지원 원본)에는 있는데 candidates 가 못 따라오면
@@ -440,7 +484,7 @@ async function fetchRaw(): Promise<Raw> {
     }
   }
 
-  return { warnings, candidates, applications, resumeCount, publicCount, jdSheet, ivSheet, empSheet, revSheet, fyiApps, vnJobs, vnApps, cost, fetchedAt: Date.now() }
+  return { warnings, candidates, applications, resumeCount, publicCount, jdSheet, ivSheet, empSheet, revSheet, fyiApps, fyiJobById, vnJobs, vnApps, cost, fetchedAt: Date.now() }
 }
 
 type ChanAcc = {
@@ -534,8 +578,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // 공고 판정용 누적치도 여기서 — 기간 보기에서도 판정은 스톡(현재 상태·누적 지원자) 기준.
   const chanByEmailAll: Record<string, string> = {}
   const statusCount: Record<string, number> = {}
-  const perJdAll: Record<string, { people: number; cur: Record<string, number>; firstApp: string | null }> = {}
-  const jdAll = (code: string) => perJdAll[code] || (perJdAll[code] = { people: 0, cur: {}, firstApp: null })
+  const perJdAll: Record<string, { people: number; apps: number; iv: number; cur: Record<string, number>; firstApp: string | null }> = {}
+  const jdAll = (code: string) => perJdAll[code] || (perJdAll[code] = { people: 0, apps: 0, iv: 0, cur: {}, firstApp: null })
   let finalPassedAll = 0
   for (const c of candidates) {
     const e = String(c.email || '').toLowerCase()
@@ -568,8 +612,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     const c = chan[key] || (chan[key] = { key, people: 0, applications: 0, docPass: 0, interviews: 0, hires: 0, jobsPosted: null, spendFees: null, spendAds: null })
     c[field]++
   }
-  const perJd: Record<string, { people: number; docPass: number; delivered: number; offer: number; hires: number; interviews: number; apps: number }> = {}
-  const jd = (code: string) => perJd[code] || (perJd[code] = { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0 })
+  const perJd: Record<string, { people: number; docPass: number; delivered: number; offer: number; hires: number; interviews: number; apps: number; appsFyi: number }> = {}
+  const jd = (code: string) => perJd[code] || (perJd[code] = { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0 })
   let screenPass = 0, delivered = 0, interviewPipe = 0, offerReached = 0, finalPassed = 0
 
   for (const c of periodCandidates) {
@@ -604,20 +648,76 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   let applicationsTotal = 0
   for (const a of applications) {
     if (a.applied_at) monthly[toVNMonth(a.applied_at)] = (monthly[toVNMonth(a.applied_at)] || 0) + 1
-    if (a.job_code && a.applied_at) {
+    if (a.job_code) {
       const j = jdAll(a.job_code)
-      if (!j.firstApp || a.applied_at < j.firstApp) j.firstApp = a.applied_at
+      j.apps++ // 스톡 지원 건 — 지원 부족 판정 재료 (기간 필터 무관)
+      if (a.applied_at && (!j.firstApp || a.applied_at < j.firstApp)) j.firstApp = a.applied_at
     }
     if (!inPeriod(a.applied_at)) continue
     bump(a.sheet_source || '(미상)', 'applications')
     applicationsTotal++
     if (a.job_code) jd(a.job_code).apps++
   }
+  // FYI 직접 지원의 공고 귀속 — 시트 탭엔 없는 지원이라 귀속 없이는 공고별 '지원'에서 통째로 빠진다.
+  // ① jobs.source_id 의 앞머리 공고코드 (salarymap ktc-sync 크론이 원장과 매칭해 기록,
+  //    재게시 중복은 "OQ901#2" 형태 — 2026-07-28 백필 완료, 이게 정본 경로)
+  // ② 아직 코드가 없는 신규 공고 폴백: 제목 유니크 정확 일치(회사 어긋나면 기각 — 원장에 없는
+  //    회사의 동명 공고가 남의 코드에 붙던 실사례 방지) → 회사 매칭 후 제목 유사
+  //    (괄호·" - " 접미 제거 정확/포함 → 앞 3단어). FYI 표기가 원장의 변형인 실사례가 많다
+  //    (FPT Software Korea vs Fptsoftware, "TikTok Ads Marketing Specialist" vs "... Manager").
+  const aln = (s: unknown) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const simp = (s: unknown) => normName(String(s || '').replace(/\([^)]*\)/g, ' ').split(' - ')[0])
+  const jdIndex: { code: string; comp: string; title: string }[] = []
+  for (const r of jdDataRows) {
+    const code = String(r[JC.code] || '').trim()
+    if (!code) continue
+    jdIndex.push({ code, comp: aln(r[JC.company]), title: simp(r[JC.title]) })
+  }
+  const fyiCodeCache: Record<string, string | null> = {}
+  const fyiCodeForJob = (jobId: string): string | null => {
+    if (jobId in fyiCodeCache) return fyiCodeCache[jobId]
+    const job = raw.fyiJobById[jobId]
+    let code: string | null = null
+    if (job) {
+      const jc = aln(job.company)
+      const compMatch = (c: string) =>
+        c === jc || (c.length >= 4 && jc.length >= 4 && (c.includes(jc) || jc.includes(c)))
+      code = (job.sourceId.match(/^([A-Z]{2,6}\d{3,4})/) || [])[1] || null
+      if (!code) {
+        const exact = titleToCode[normName(job.title)]
+        if (exact) {
+          const owner = jdIndex.find(x => x.code === exact)
+          if (!jc || !owner?.comp || compMatch(owner.comp)) code = exact
+        }
+      }
+      if (!code) {
+        const jt = simp(job.title)
+        const cands = jdIndex.filter(x => x.comp && jc && compMatch(x.comp))
+        const strong = cands.filter(x => x.title === jt || (jt && (x.title.includes(jt) || jt.includes(x.title))))
+        const p3 = (s: string) => s.split(' ').slice(0, 3).join(' ')
+        const weak = cands.filter(x => p3(x.title) === p3(jt))
+        const hit = strong.length ? strong : weak
+        if (new Set(hit.map(x => x.code)).size === 1 && hit.length) code = hit[0].code
+      }
+    }
+    fyiCodeCache[jobId] = code
+    return code
+  }
   for (const a of fyiApps) {
     if (a.created_at) monthly[toVNMonth(a.created_at)] = (monthly[toVNMonth(a.created_at)] || 0) + 1
+    const code = fyiCodeForJob(a.job_id)
+    if (code) {
+      const j = jdAll(code)
+      j.apps++
+      if (a.created_at && (!j.firstApp || a.created_at < j.firstApp)) j.firstApp = a.created_at
+    }
     if (!inPeriod(a.created_at)) continue
     bump('FYI', 'applications')
     applicationsTotal++
+    if (code) {
+      jd(code).apps++
+      jd(code).appsFyi++
+    }
   }
 
   // ── 면접 (Master INTERVIEW 탭 — 사람 단위 1회, 공고코드 추출) ──
@@ -625,11 +725,21 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   {
     const seenPerson = new Set<string>()
     const seenPersonCode = new Set<string>()
+    const seenPersonCodeAll = new Set<string>()
     for (const r of ivSheet.slice(2)) {
       const email = String(r[2] || '').trim().toLowerCase()
       const name = String(r[1] || '').trim()
       if (!name) continue
       const personKey = email || name
+      const codes = [...new Set(String(r[13] || '').match(CODE_RE) || [])]
+      // 스톡 면접 (판정용 — 기간 필터 무관): 공고에 "기업 반응 이력"이 있는지의 근거
+      for (const code of codes) {
+        const key = `${personKey}|${code}`
+        if (!seenPersonCodeAll.has(key)) {
+          seenPersonCodeAll.add(key)
+          jdAll(code).iv++
+        }
+      }
       // 기간 보기: 코호트(해당 기간 지원자)에 속한 사람만 집계
       if (start != null && !cohortEmails.has(email)) continue
       if (!seenPerson.has(personKey)) {
@@ -638,7 +748,6 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         const ch = channelForEmailAll(email)
         if (ch) bump(ch, 'interviews') // 파이프라인 미귀속 인원은 채널 표에서 제외
       }
-      const codes = [...new Set(String(r[13] || '').match(CODE_RE) || [])]
       for (const code of codes) {
         const key = `${personKey}|${code}`
         if (seenPersonCode.has(key)) continue
@@ -734,29 +843,38 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     .filter((r: any[]) => String(r[JC.code] || '').trim())
     .map((r: any[]) => {
       const code = String(r[JC.code]).trim()
-      const agg = perJd[code] || { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0 }
+      const agg = perJd[code] || { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0 }
       const status = String(r[JC.status] || '').trim()
       const open = !CLOSED_RE.test(status)
       const headcount = parseInt(r[JC.headcount]) || null
 
       // 판정 재료는 누적/현재 상태 기준 (기간 보기여도 판정은 안 바뀐다)
-      const all = perJdAll[code] || { people: 0, cur: {}, firstApp: null }
+      const all = perJdAll[code] || { people: 0, apps: 0, iv: 0, cur: {}, firstApp: null }
       const cur = all.cur
       const curCompany = cur.sent_to_company || 0
       const curInterview = cur.interviewing || 0
       const curOffer = cur.offer || 0
-      const curInternal = (cur.new || 0) + (cur.passed || 0) + (cur.ready_to_forward || 0)
+      const curNew = cur.new || 0
+      const curPassed = cur.passed || 0
+      const curReady = cur.ready_to_forward || 0
+      const curInternal = curNew + curPassed + curReady
       const hiresAll = cur.final_passed || 0
       const startDate = parseReceived(r[JC.received], all.firstApp, fetchedAt) || (all.firstApp ? all.firstApp.slice(0, 10) : null)
       const days = startDate ? Math.max(0, Math.round((fetchedAt - new Date(`${startDate}T00:00:00+07:00`).getTime()) / 86400000)) : null
 
+      // 2026-07-28 개정 (전수조사 근거): 구 규칙은 "검토 체류 1명만 있어도 순항"이라
+      // 면접·입사가 한 번도 없는 무반응 공고 12건이 순항으로 위장됐다 (정체 0건 착시).
+      // 검토 중은 ① 반응 이력(면접·입사) 있으면 순항 ② 없어도 수주 6주 미만이면 순항(첫 반응 대기)
+      // ③ 6주 넘도록 반응 0이면 정체(기업 응답 없음)로 본다.
       let health: JdRow['health'] = null
       if (open) {
         if (headcount != null && hiresAll >= headcount) health = 'good' // 충원 완료
-        else if (curOffer + curInterview + curCompany > 0) health = 'good' // 기업 단계 진행 중
+        else if (curOffer + curInterview > 0) health = 'good' // 면접·오퍼 진행 중
+        else if (curCompany > 0 && (all.iv > 0 || hiresAll > 0)) health = 'good' // 검토 중 + 기업 반응 이력
+        else if (curCompany > 0 && days != null && days < NO_RESPONSE_DAYS) health = 'good' // 검토 중 (첫 반응 대기)
         else if (days != null && days < EARLY_DAYS) health = 'early'
-        else if (all.people < APPS_PER_TO_FLOOR * (headcount || 1)) health = 'low'
-        else health = 'stall'
+        else if (all.apps < APPS_PER_TO_FLOOR * (headcount || 1)) health = 'low'
+        else health = 'stall' // curCompany>0 이면 기업 응답 없음, 0이면 내부 처리 정체 — 사유는 UI에서 분기
       }
 
       return {
@@ -766,9 +884,10 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         headcount,
         status,
         open,
-        apps: agg.apps, people: agg.people, docPass: agg.docPass,
+        apps: agg.apps, appsFyi: agg.appsFyi, people: agg.people, docPass: agg.docPass,
         delivered: agg.delivered, interviews: agg.interviews, offer: agg.offer, hires: agg.hires,
-        startDate, days, peopleAll: all.people, curInternal, curCompany, curInterview, curOffer, health,
+        startDate, days, peopleAll: all.people, appsAll: all.apps,
+        curInternal, curNew, curPassed, curReady, curCompany, curInterview, curOffer, health,
       }
     })
     .sort((a: JdRow, b: JdRow) => {
@@ -845,6 +964,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       funnel,
       inProgress: {
         screeningQueue: statusCount.new || 0,
+        screenPassed: statusCount.passed || 0,
         readyToForward: statusCount.ready_to_forward || 0,
         sentToCompany: statusCount.sent_to_company || 0,
         interviewing: statusCount.interviewing || 0,
@@ -888,7 +1008,7 @@ const getCachedByPeriod = unstable_cache(
       '30d': computeFromRaw(raw, '30d', at),
     }
   },
-  ['staffing-master-data-v5'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v10'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

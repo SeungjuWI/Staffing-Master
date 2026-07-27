@@ -287,6 +287,7 @@ a { color: inherit; text-decoration: none; }
 .strip .cell:hover { background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
 .strip .cell .label { color: var(--ink-2); font-size: 12px; }
 .strip .cell .value { font-size: 21px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 1px; }
+.strip .cell .sub { color: var(--ink-2); font-size: 11.5px; margin-top: 2px; font-variant-numeric: tabular-nums; }
 
 /* ═══ 월별 컬럼 차트 ═══ */
 .cols { display: flex; align-items: flex-end; gap: 10px; height: 150px; padding-top: 20px; border-bottom: 1px solid var(--baseline); }
