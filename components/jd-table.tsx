@@ -7,14 +7,141 @@
 // 공고 선택 (대표 요청 2026-07-27: "공고 몇 개만 선택해서 볼 수 있게"): 진행 중 표에서
 // 체크한 공고만 추려 보는 토글. 선택은 localStorage 에 남아 새로고침·탭 이동에도 유지된다.
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { JdRow } from '@/lib/types'
-import { fmtDay, fmtInt } from '@/lib/fmt'
+import { channelLabel, fmtDay, fmtInt } from '@/lib/fmt'
 import { EmptyState, Meter } from './viz'
 import { HEALTH_META } from './tables'
 
 const SEL_KEY = 'sm-jd-sel-v1'
 const SEL_ONLY_KEY = 'sm-jd-sel-only-v1'
+
+// ── 행 클릭 상세: 채널별 지원 도넛 + 부수 정보 (대표 요청 2026-07-28) ──────────
+// 채널 색은 "같은 채널 = 항상 같은 색" 고정 매핑 (validate_palette 라이트/다크 통과,
+// 세그먼트 2px 갭 + 범례 + 툴팁이 색약 보조 인코딩). 매핑 밖 소규모 채널은 '기타'로 접는다.
+// ITviec 은 api·수동 두 탭이 같은 사이트라 하나로 합쳐 보여준다.
+const CH_SITE: Record<string, string> = { 'ITviec-api': 'ITviec', 'it-viec-manual': 'ITviec' }
+const CH_SLUG: Record<string, string> = {
+  'landing-page': 'landing', ITviec: 'itviec', 'top-dev': 'topdev',
+  LinkedIn: 'linkedin', FYI: 'fyi', 'jobs-go': 'jobsgo',
+}
+
+type DonutPart = { label: string; apps: number; slug: string; note?: string }
+
+function siteBreakdown(channels: JdRow['channels']): DonutPart[] {
+  const bySite: Record<string, number> = {}
+  for (const c of channels) {
+    const site = CH_SITE[c.key] || c.key
+    bySite[site] = (bySite[site] || 0) + c.apps
+  }
+  const named: DonutPart[] = []
+  let etc = 0
+  const etcParts: string[] = []
+  for (const [site, apps] of Object.entries(bySite).sort((a, b) => b[1] - a[1])) {
+    const slug = CH_SLUG[site]
+    if (slug) named.push({ label: site === 'ITviec' ? 'ITviec' : channelLabel(site), apps, slug })
+    else {
+      etc += apps
+      etcParts.push(`${channelLabel(site)} ${fmtInt(apps)}건`)
+    }
+  }
+  if (etc > 0) named.push({ label: '기타', apps: etc, slug: 'etc', note: etcParts.join(' · ') })
+  return named
+}
+
+function Donut({ parts, total }: { parts: DonutPart[]; total: number }) {
+  const R = 44
+  const C = 2 * Math.PI * R
+  const gap = parts.length > 1 ? 2 : 0
+  let acc = 0
+  return (
+    <svg className="dnt" viewBox="0 0 120 120" role="img" aria-label="채널별 지원 분포 도넛">
+      <circle className="dnt-track" cx="60" cy="60" r={R} strokeWidth="15" fill="none" />
+      {parts.map(p => {
+        const frac = total > 0 ? p.apps / total : 0
+        const len = Math.max(0.5, frac * C - gap)
+        const off = -acc * C
+        acc += frac
+        return (
+          <circle
+            key={p.slug + p.label}
+            className={`dnt-seg ch-${p.slug}`}
+            cx="60" cy="60" r={R} strokeWidth="15" fill="none"
+            strokeDasharray={`${len} ${C - len}`}
+            strokeDashoffset={off}
+            transform="rotate(-90 60 60)"
+          >
+            <title>{`${p.label} ${fmtInt(p.apps)}건 (${Math.round(frac * 100)}%)${p.note ? ` — ${p.note}` : ''}`}</title>
+          </circle>
+        )
+      })}
+      <text className="dnt-num" x="60" y="58" textAnchor="middle">{fmtInt(total)}</text>
+      <text className="dnt-cap" x="60" y="74" textAnchor="middle">지원 건</text>
+    </svg>
+  )
+}
+
+// 순항 사유 한 줄 (문제 공고 사유는 healthNote 재사용)
+function goodReason(j: JdRow): string {
+  if (j.headcount != null && j.hiresAll >= j.headcount) return '충원 완료'
+  if (j.curInterview + j.curOffer > 0) return '면접·오퍼 진행 중'
+  if (j.interviews > 0 || j.hiresAll > 0) return '기업 검토 중 — 면접·입사 이력 있는 기업'
+  return '기업 검토 중 — 첫 반응 대기 (수주 6주 미만)'
+}
+
+function JdDetail({ j, open, colSpan }: { j: JdRow; open: boolean; colSpan: number }) {
+  const parts = siteBreakdown(j.channels)
+  const total = parts.reduce((s, p) => s + p.apps, 0)
+  const lastDays =
+    j.lastAppDate != null
+      ? Math.max(0, Math.floor((Date.now() - new Date(`${j.lastAppDate}T00:00:00+07:00`).getTime()) / 86400000))
+      : null
+  const stages = [
+    ['스크리닝 대기', j.curNew], ['합격 후 대기', j.curPassed], ['발송 대기', j.curReady],
+    ['기업 검토', j.curCompany], ['면접', j.curInterview], ['오퍼', j.curOffer],
+  ].filter(([, n]) => (n as number) > 0)
+  return (
+    <tr className="jdx">
+      <td colSpan={colSpan}>
+        <div className="jdx-wrap">
+          {total > 0 ? <Donut parts={parts} total={total} /> : <div className="jdx-empty">지원 없음</div>}
+          {total > 0 && (
+            <div className="jdx-legend">
+              {parts.map(p => (
+                <span className={`lg ch-${p.slug}`} key={p.slug + p.label} title={p.note}>
+                  <i />
+                  {p.label}
+                  <b>{fmtInt(p.apps)}</b>
+                  <span className="pct">{Math.round((p.apps / total) * 100)}%</span>
+                </span>
+              ))}
+            </div>
+          )}
+          <dl className="jdx-facts">
+            <dt>수주일</dt>
+            <dd>{j.startDate ? <>{fmtDay(j.startDate)}{j.days != null && <> · <b>{fmtInt(Math.max(1, Math.ceil(j.days / 7)))}주차</b></>}</> : '– (원장 미기입)'}</dd>
+            <dt>최근 지원</dt>
+            <dd>{lastDays == null ? '–' : lastDays === 0 ? <b>오늘</b> : <><b>{fmtInt(lastDays)}일 전</b> ({fmtDay(j.lastAppDate!)})</>}</dd>
+            <dt>지금 단계</dt>
+            <dd>{stages.length ? stages.map(([l, n]) => `${l} ${fmtInt(n as number)}`).join(' · ') : '진행 중 인원 없음'}</dd>
+            <dt>누적 진행</dt>
+            <dd>합격 <b>{fmtInt(j.docPass)}</b> · 전달 <b>{fmtInt(j.delivered)}</b> · 면접 <b>{fmtInt(j.interviews)}</b> · 입사 <b>{fmtInt(j.hires)}</b></dd>
+            <dt>충원</dt>
+            <dd>{j.headcount != null ? <>TO {fmtInt(j.headcount)}명 중 <b>{fmtInt(j.hiresAll)}명</b> 채움</> : 'TO 미기재'}</dd>
+            <dt>판정</dt>
+            <dd>
+              {open && j.health ? (
+                <><i className={`jdot ${j.health}`} /> <b>{HEALTH_META[j.health].label}</b> — {j.health === 'good' ? goodReason(j) : healthNote(j)}</>
+              ) : (
+                <>마감{j.status ? ` (${j.status})` : ''}</>
+              )}
+            </dd>
+          </dl>
+        </div>
+      </td>
+    </tr>
+  )
+}
 
 // 판정 사유 한 줄 — 문제 공고(정체·부족·초기)의 호버 툴팁 (숫자는 현재 걸려 있는 인원, 누적 아님)
 // 정체는 병목 위치를 함께 말한다: 기업 응답 없음(검토 체류만) vs 내부 처리(기업 단계 0)
@@ -47,7 +174,7 @@ const sortVal = (j: JdRow, key: SortKey): string | number | null => {
     case 'delivered': return j.delivered
     case 'interviews': return j.interviews
     case 'hires': return j.hires
-    case 'fill': return j.headcount ? j.hires / j.headcount : null
+    case 'fill': return j.headcount ? j.hiresAll / j.headcount : null
   }
 }
 
@@ -76,6 +203,8 @@ function SortTh({
 export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 'closed' }) {
   const open = mode === 'open'
   const [sort, setSort] = useState<Sort>(null)
+  // 행 클릭 상세 (아코디언 — 한 번에 하나만)
+  const [xCode, setXCode] = useState<string | null>(null)
   const onSort = (key: SortKey) => {
     const firstDir: 1 | -1 = key === 'company' ? 1 : -1
     setSort(s => (s?.key !== key ? { key, dir: firstDir } : s.dir === firstDir ? { key, dir: (-firstDir as 1 | -1) } : null))
@@ -171,10 +300,16 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                 // 순항은 툴팁 없음 (숫자 열이 이미 설명) — 문제/유예 공고만 호버로 판정 이유 노출
                 const note = open && j.health && j.health !== 'good' ? healthNote(j) : null
                 const weeks = j.days != null ? Math.max(1, Math.ceil(j.days / 7)) : null
+                const expanded = xCode === j.code
                 return (
-                  <tr key={j.code}>
+                  <Fragment key={j.code}>
+                  <tr
+                    className={expanded ? 'jdxrow jdxon' : 'jdxrow'}
+                    onClick={() => setXCode(c => (c === j.code ? null : j.code))}
+                    aria-expanded={expanded}
+                  >
                     {open && (
-                      <td className="selcell">
+                      <td className="selcell" onClick={e => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={selected.has(j.code)}
@@ -185,6 +320,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                     )}
                     <td className="jdcell">
                       <div className="cell-trunc" title={note ? undefined : `${full}${!open && j.status ? ` · ${j.status}` : ''}`}>
+                        <span className="xchev" aria-hidden>▸</span>
                         {open && j.health && (
                           <i className={`jdot ${j.health}`} title={`${HEALTH_META[j.health].label} — ${HEALTH_META[j.health].desc}`} />
                         )}
@@ -227,10 +363,12 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                     <td>{fmtInt(j.delivered)}</td>
                     <td>{fmtInt(j.interviews)}</td>
                     <td>{fmtInt(j.hires)}</td>
-                    <td title={j.headcount ? `입사 ${fmtInt(j.hires)} / TO ${fmtInt(j.headcount)}` : undefined}>
-                      <Meter ratio={j.headcount ? j.hires / j.headcount : null} />
+                    <td title={j.headcount ? `입사 ${fmtInt(j.hiresAll)} / TO ${fmtInt(j.headcount)}` : undefined}>
+                      <Meter ratio={j.headcount ? j.hiresAll / j.headcount : null} />
                     </td>
                   </tr>
+                  {expanded && <JdDetail j={j} open={open} colSpan={10} />}
+                  </Fragment>
                 )
               })}
             </tbody>

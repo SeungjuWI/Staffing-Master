@@ -578,8 +578,10 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // 공고 판정용 누적치도 여기서 — 기간 보기에서도 판정은 스톡(현재 상태·누적 지원자) 기준.
   const chanByEmailAll: Record<string, string> = {}
   const statusCount: Record<string, number> = {}
-  const perJdAll: Record<string, { people: number; apps: number; iv: number; cur: Record<string, number>; firstApp: string | null }> = {}
-  const jdAll = (code: string) => perJdAll[code] || (perJdAll[code] = { people: 0, apps: 0, iv: 0, cur: {}, firstApp: null })
+  const perJdAll: Record<string, { people: number; apps: number; iv: number; cur: Record<string, number>; firstApp: string | null; lastApp: string | null }> = {}
+  const jdAll = (code: string) => perJdAll[code] || (perJdAll[code] = { people: 0, apps: 0, iv: 0, cur: {}, firstApp: null, lastApp: null })
+  // 최근 지원일 판정용 상한 — 날짜 파싱 오류로 생긴 미래 값 배제 (+1일 여유)
+  const lastAppCap = new Date(fetchedAt + 86400000).toISOString()
   let finalPassedAll = 0
   for (const c of candidates) {
     const e = String(c.email || '').toLowerCase()
@@ -612,8 +614,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     const c = chan[key] || (chan[key] = { key, people: 0, applications: 0, docPass: 0, interviews: 0, hires: 0, jobsPosted: null, spendFees: null, spendAds: null })
     c[field]++
   }
-  const perJd: Record<string, { people: number; docPass: number; delivered: number; offer: number; hires: number; interviews: number; apps: number; appsFyi: number }> = {}
-  const jd = (code: string) => perJd[code] || (perJd[code] = { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0 })
+  const perJd: Record<string, { people: number; docPass: number; delivered: number; offer: number; hires: number; interviews: number; apps: number; appsFyi: number; chan: Record<string, number> }> = {}
+  const jd = (code: string) => perJd[code] || (perJd[code] = { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0, chan: {} })
   let screenPass = 0, delivered = 0, interviewPipe = 0, offerReached = 0, finalPassed = 0
 
   for (const c of periodCandidates) {
@@ -652,11 +654,17 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       const j = jdAll(a.job_code)
       j.apps++ // 스톡 지원 건 — 지원 부족 판정 재료 (기간 필터 무관)
       if (a.applied_at && (!j.firstApp || a.applied_at < j.firstApp)) j.firstApp = a.applied_at
+      if (a.applied_at && a.applied_at <= lastAppCap && (!j.lastApp || a.applied_at > j.lastApp)) j.lastApp = a.applied_at
     }
     if (!inPeriod(a.applied_at)) continue
     bump(a.sheet_source || '(미상)', 'applications')
     applicationsTotal++
-    if (a.job_code) jd(a.job_code).apps++
+    if (a.job_code) {
+      const j = jd(a.job_code)
+      j.apps++
+      const ch = a.sheet_source || '(미상)'
+      j.chan[ch] = (j.chan[ch] || 0) + 1
+    }
   }
   // FYI 직접 지원의 공고 귀속 — 시트 탭엔 없는 지원이라 귀속 없이는 공고별 '지원'에서 통째로 빠진다.
   // ① jobs.source_id 의 앞머리 공고코드 (salarymap ktc-sync 크론이 원장과 매칭해 기록,
@@ -710,13 +718,16 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       const j = jdAll(code)
       j.apps++
       if (a.created_at && (!j.firstApp || a.created_at < j.firstApp)) j.firstApp = a.created_at
+      if (a.created_at && a.created_at <= lastAppCap && (!j.lastApp || a.created_at > j.lastApp)) j.lastApp = a.created_at
     }
     if (!inPeriod(a.created_at)) continue
     bump('FYI', 'applications')
     applicationsTotal++
     if (code) {
-      jd(code).apps++
-      jd(code).appsFyi++
+      const j = jd(code)
+      j.apps++
+      j.appsFyi++
+      j.chan.FYI = (j.chan.FYI || 0) + 1
     }
   }
 
@@ -843,7 +854,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     .filter((r: any[]) => String(r[JC.code] || '').trim())
     .map((r: any[]) => {
       const code = String(r[JC.code]).trim()
-      const agg = perJd[code] || { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0 }
+      const agg = perJd[code] || { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0, chan: {} as Record<string, number> }
       const status = String(r[JC.status] || '').trim()
       const open = !CLOSED_RE.test(status)
       const headcount = parseInt(r[JC.headcount]) || null
@@ -885,7 +896,9 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         status,
         open,
         apps: agg.apps, appsFyi: agg.appsFyi, people: agg.people, docPass: agg.docPass,
-        delivered: agg.delivered, interviews: agg.interviews, offer: agg.offer, hires: agg.hires,
+        delivered: agg.delivered, interviews: agg.interviews, offer: agg.offer, hires: agg.hires, hiresAll,
+        channels: Object.entries(agg.chan).map(([k, n]) => ({ key: k, apps: n })).sort((a, b) => b.apps - a.apps),
+        lastAppDate: all.lastApp ? String(all.lastApp).slice(0, 10) : null,
         startDate, days, peopleAll: all.people, appsAll: all.apps,
         curInternal, curNew, curPassed, curReady, curCompany, curInterview, curOffer, health,
       }
@@ -902,7 +915,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
 
   const openJds = jds.filter(j => j.open)
   const headcountTotal = openJds.reduce((s, j) => s + (j.headcount || 0), 0)
-  const hiresInOpen = openJds.reduce((s, j) => s + j.hires, 0)
+  // 충원(채움)은 스톡 — 기간 보기에서 코호트 입사로 세면 "목표 38명 중 0명"처럼 깨져 보인다
+  const hiresInOpen = openJds.reduce((s, j) => s + j.hiresAll, 0)
 
   // ── 성과 ──────────────────────────────────────────────────
   // 총 지출은 헤드라인(누적)용이라 기간 필터와 무관하게 원본 chan 값으로 계산
@@ -913,6 +927,9 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   const working = attributedHires.filter(h => /^ing$/i.test(h.status)).length
   const nowMonth = toVNMonth(new Date().toISOString())
   const hiresThisMonth = attributedHires.filter(h => h.hired_at && toVNMonth(h.hired_at) === nowMonth).length
+  // 기간 보기의 입사 = 입사일(hired_at, 매출현황 시트) 기준 — 코호트(그 기간 지원자의 입사)와 별개로,
+  // "이 기간에 몇 명 입사했나"라는 히어로 질문에 답한다 (2026-07-28, "기간 필터가 안 먹는다" 피드백)
+  const hiresInPeriod = start == null ? null : attributedHires.filter(h => h.hired_at && inPeriod(h.hired_at)).length
 
   const byCompany: Record<string, CompanyPerf> = {}
   for (const h of attributedHires) {
@@ -944,6 +961,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     warnings: raw.warnings,
     headline: {
       hiresTotal: finalPassedAll,
+      hiresInPeriod,
       hiresThisMonth,
       working,
       left: attributedHires.filter(h => !/^ing$/i.test(h.status) && h.status).length,
@@ -1008,7 +1026,7 @@ const getCachedByPeriod = unstable_cache(
       '30d': computeFromRaw(raw, '30d', at),
     }
   },
-  ['staffing-master-data-v10'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v12'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

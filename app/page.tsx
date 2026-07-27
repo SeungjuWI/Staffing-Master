@@ -145,8 +145,9 @@ async function Dashboard({
       ))}
       {filtered && (
         <div className="periodnote">
-          <b>{PERIODS.find(p => p.key === period)!.label}</b> 보기 — 지원일 코호트 기준 (이 기간에 지원한 인재의 현재
-          도달 단계) · 입사 누적·재직·매출·인재풀·비용 지표는 누적 유지
+          <b>{PERIODS.find(p => p.key === period)!.label}</b> 보기 — 기간 적용: 지원·지원자·퍼널(이 기간
+          지원자의 현재 도달 단계)·공고 표 숫자·베트남 지원, 입사는 입사일 기준 · 항상 누적: 재직·매출·비용·인재풀·
+          &lsquo;지금 진행 중&rsquo;(현재 상태)·공고 판정·충원율
         </div>
       )}
 
@@ -156,13 +157,19 @@ async function Dashboard({
           <section className="section">
             <div className="hero-card">
               <div className="hero-main">
-                <div className="hero-label">입사 (누적)</div>
+                <div className="hero-label">
+                  입사 ({filtered ? `${PERIODS.find(p => p.key === period)!.label} · 입사일 기준` : '누적'})
+                </div>
                 <div className="hero-row">
                   <span className="hero-num">
-                    <CountUp n={h.hiresTotal} />
+                    <CountUp n={filtered && h.hiresInPeriod != null ? h.hiresInPeriod : h.hiresTotal} />
                   </span>
                   <span className="hero-unit">명</span>
-                  {h.hiresThisMonth > 0 && <span className="chip">이번 달 +{h.hiresThisMonth}</span>}
+                  {filtered ? (
+                    <span className="chip">누적 {fmtInt(h.hiresTotal)}명</span>
+                  ) : (
+                    h.hiresThisMonth > 0 && <span className="chip">이번 달 +{h.hiresThisMonth}</span>
+                  )}
                 </div>
               </div>
               <div className="hero-side">
@@ -180,13 +187,13 @@ async function Dashboard({
                   </div>
                 </div>
                 <div className="kv">
-                  <div className="k">총 매출</div>
+                  <div className="k">총 매출{filtered && ' (누적)'}</div>
                   <div className="v">
                     {fmtUsd(h.revenueUsd)} <span className="dim">이익 {fmtUsd(h.profitUsd)}</span>
                   </div>
                 </div>
                 <div className="kv">
-                  <div className="k">채용 1명당 마케팅 비용</div>
+                  <div className="k">채용 1명당 마케팅 비용{filtered && ' (누적)'}</div>
                   <div className="v">
                     {h.costPerHireKrw != null ? fmtKrw(h.costPerHireKrw) : '–'}{' '}
                     <span className="dim">지출 {fmtKrw(h.totalSpendKrw)}</span>
@@ -236,8 +243,8 @@ async function Dashboard({
                 </div>
                 <div className="mcell">
                   <div className="num">
-                    {fmtInt(h.hiresTotal)}
-                    <small>명 입사</small>
+                    {fmtInt(filtered && h.hiresInPeriod != null ? h.hiresInPeriod : h.hiresTotal)}
+                    <small>명 입사{filtered ? ' (기간)' : ''}</small>
                   </div>
                   <div className="sub">
                     {(() => {
@@ -315,7 +322,10 @@ async function Dashboard({
           <section className="section">
             <div className="section-head">
               <h2>지금 진행 중</h2>
-              <span className="sub">각 단계에 걸려 있는 인원 — 아랫줄은 모집 중 공고 몫, 호버하면 최다 공고</span>
+              <span className="sub">
+                각 단계에 걸려 있는 인원 — 아랫줄은 모집 중 공고 몫, 호버하면 최다 공고
+                {filtered && ' · 현재 상태 스냅숏이라 기간 필터 무관'}
+              </span>
             </div>
             <div className="strip">
               {(() => {
@@ -382,6 +392,7 @@ async function Dashboard({
               <span className="sub">
                 입사·재직·매출 — 파이프라인 경유 입사만 집계
                 {outcome.excludedHires > 0 && ` (별도 경로 입사 ${outcome.excludedHires}명 제외)`}
+                {filtered && ' · 누적 기준 (기간 무관)'}
               </span>
             </div>
             <div className="card">
@@ -537,6 +548,14 @@ async function Dashboard({
               <div>
                 <dt>TO당 지원 30건</dt>
                 <dd>지원 부족의 기준선 — 입사가 성사된 공고들의 TO당 지원 건 실측 (최소 17 ~ 중앙값 58건)의 하위 사분위 수준</dd>
+              </div>
+              <div>
+                <dt>기간 보기</dt>
+                <dd>
+                  이번 달/최근 30일에서 기간이 적용되는 지표: 지원·지원자·퍼널(그 기간 지원자의 현재 도달 단계)·공고
+                  표 숫자·베트남 지원, 그리고 입사(입사일 기준). 재직·매출·비용·인재풀·진행 중 인원·공고 판정·충원율은
+                  시간 축이 없거나 현재 상태라 항상 누적
+                </dd>
               </div>
               <div>
                 <dt>진행 인원</dt>

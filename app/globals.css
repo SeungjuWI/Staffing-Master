@@ -460,6 +460,51 @@ th.selcell + th, td.selcell + td { text-align: left; padding-left: 2px; }
 }
 .meter .pct { font-size: 12px; color: var(--ink-2); min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
 
+/* ═══ 공고 행 클릭 상세 — 채널별 지원 도넛 + 부수 정보 ═══ */
+/* 채널 고정색: 같은 채널 = 항상 같은 색. validate_palette 통과
+   (light #3182f6·#e8590c·#7048e8·#099268·#0891b2·#d6336c / dark #3b82f6·#e8590c·#845ef7·#0ca678·#1192c9·#e64980,
+   '기타'는 의도된 중립 회색 — 세그먼트 2px 갭·범례·툴팁이 색약 보조 인코딩) */
+:root {
+  --ch-landing: #3182f6; --ch-itviec: #7048e8; --ch-topdev: #099268;
+  --ch-linkedin: #0891b2; --ch-fyi: #d6336c; --ch-jobsgo: #e8590c; --ch-etc: #868e96;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ch-landing: #3b82f6; --ch-itviec: #845ef7; --ch-topdev: #0ca678;
+    --ch-linkedin: #1192c9; --ch-fyi: #e64980; --ch-jobsgo: #e8590c; --ch-etc: #6c757d;
+  }
+}
+.ch-landing { --chc: var(--ch-landing); } .ch-itviec { --chc: var(--ch-itviec); }
+.ch-topdev { --chc: var(--ch-topdev); } .ch-linkedin { --chc: var(--ch-linkedin); }
+.ch-fyi { --chc: var(--ch-fyi); } .ch-jobsgo { --chc: var(--ch-jobsgo); } .ch-etc { --chc: var(--ch-etc); }
+
+tbody tr.jdxrow td { cursor: pointer; }
+.xchev {
+  display: inline-block; width: 13px; color: var(--muted); font-size: 10px;
+  transition: transform 0.2s var(--ease); vertical-align: 1px;
+}
+tr.jdxon .xchev { transform: rotate(90deg); }
+tr.jdxon td { border-bottom: none; }
+tr.jdx > td { padding: 0 10px 16px; background: color-mix(in srgb, var(--accent) 2.5%, transparent); cursor: default; }
+.jdx-wrap { display: flex; gap: 30px; align-items: center; padding: 12px 8px 4px; flex-wrap: wrap; animation: rise 0.3s var(--ease) both; }
+.jdx-empty { color: var(--muted); font-size: 13px; padding: 20px 8px; }
+.dnt { width: 126px; height: 126px; flex: none; }
+.dnt-track { stroke: var(--grid); }
+.dnt-seg { stroke: var(--chc); transition: opacity 0.15s; }
+.dnt-seg:hover { opacity: 0.8; }
+.dnt-num { font-size: 22px; font-weight: 700; fill: var(--ink); font-variant-numeric: tabular-nums; }
+.dnt-cap { font-size: 10px; fill: var(--muted); }
+.jdx-legend { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; min-width: 176px; flex: none; }
+.jdx-legend .lg { display: flex; align-items: center; gap: 8px; color: var(--ink-2); white-space: nowrap; }
+.jdx-legend .lg i { width: 9px; height: 9px; border-radius: 3px; flex: none; background: var(--chc); }
+.jdx-legend .lg b { color: var(--ink); font-weight: 650; margin-left: auto; font-variant-numeric: tabular-nums; }
+.jdx-legend .lg .pct { color: var(--muted); width: 36px; text-align: right; font-variant-numeric: tabular-nums; }
+.jdx-facts { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; font-size: 12.5px; flex: 1; min-width: 280px; margin: 0; align-content: center; }
+.jdx-facts dt { color: var(--muted); white-space: nowrap; }
+.jdx-facts dd { color: var(--ink-2); margin: 0; }
+.jdx-facts dd b { color: var(--ink); font-weight: 650; }
+.jdx-facts dd .jdot { margin-right: 2px; }
+
 /* ═══ 접기 (마감 공고) ═══ */
 details.fold { margin-top: 14px; border-top: 1px solid var(--grid); padding-top: 10px; }
 details.fold summary {

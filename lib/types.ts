@@ -37,11 +37,14 @@ export type JdRow = {
   delivered: number      // 기업 전달 도달
   interviews: number     // 면접 (INTERVIEW 탭)
   offer: number          // 오퍼 도달
-  hires: number          // 입사
+  hires: number          // 입사 (기간 코호트 — 퍼널·표와 정합)
+  hiresAll: number       // 입사 누적 (스톡) — 충원율·판정 재료 (기간 보기에서도 충원은 누적이 자연스러움)
   startDate: string | null // 수주일 (시트 Date Received, 없으면 최초 지원일) YYYY-MM-DD
   days: number | null    // 수주 후 경과 일수
   peopleAll: number      // 누적 지원자 (스톡 — 기간 필터 무관)
   appsAll: number        // 누적 지원 건 (스톡) — 지원 부족 판정 재료 (화면 '지원' 열과 같은 시트 기준)
+  channels: { key: string; apps: number }[] // 채널별 지원 건 (기간 코호트, apps 와 정합) — 행 클릭 상세의 도넛 재료
+  lastAppDate: string | null // 최근 지원일 (스톡, YYYY-MM-DD) — 모집 동력 신호
   curInternal: number    // 현재 내부 단계 인원 (스크리닝 대기 + 합격 후 대기 + 발송 대기)
   curNew: number         // └ 스크리닝 대기
   curPassed: number      // └ 합격 후 대기 (발송 준비 전)
@@ -86,6 +89,7 @@ export type MasterData = {
 
   headline: {
     hiresTotal: number          // 입사 누적 (Ops Employee)
+    hiresInPeriod: number | null // 기간 보기에서 입사일(hired_at) 기준 그 기간 입사 — 누적 보기는 null
     hiresThisMonth: number      // 이번 달 입사 (VN 기준)
     working: number             // 재직 중 (status=Ing)
     left: number                // 이탈/종료
@@ -117,8 +121,8 @@ export type MasterData = {
     jds: JdRow[]
     openJds: number
     headcountTotal: number      // 오픈 공고 TO 합
-    hiresInOpen: number         // 오픈 공고에서 이미 채운 인원
-    fillRateOpen: number | null // 오픈 공고 충원율
+    hiresInOpen: number         // 오픈 공고에서 이미 채운 인원 (스톡 — 기간 보기에서도 누적)
+    fillRateOpen: number | null // 오픈 공고 충원율 (스톡)
     jdSince: string | null      // 가장 이른 수주일 — "언제부터 모은 숫자인지" 표기용
   }
 
