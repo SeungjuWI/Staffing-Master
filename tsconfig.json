@@ -39,6 +39,8 @@
   ],
   "exclude": [
     "node_modules",
-    ".next-diag"
+    ".next-diag",
+    ".next-ci",
+    ".next-ci-dev"
   ]
 }

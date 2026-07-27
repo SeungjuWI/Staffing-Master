@@ -55,6 +55,8 @@ export async function GET() {
   const pipeFyiPeople = await cnt(ktc, 'candidates', q => q.eq('sheet_source', 'FYI'))
 
   // ── 독립 재집계: salarymap ──
+  // ktc_applications(재적재본)는 2026-07-27 부로 지원 건의 원천이 아님 — 시트 직접이 원천.
+  // 재적재본 수치는 편차 관찰용 진단으로만 남긴다 (landing 중복성 행 +249, 신규 탭 미반영 등).
   const appsKtc = await cnt(fyi, 'ktc_applications')
   const resume = await cnt(fyi, 'user_profiles', q => q.not('resume_url', 'is', null))
   const resumePublic = await cnt(fyi, 'user_profiles', q => q.not('resume_url', 'is', null).eq('is_resume_public', true))
@@ -75,6 +77,12 @@ export async function GET() {
     vnApps = vnApps.concat(await fetchAll<any>(fyi, 'job_applications', 'applicant_email, viewed_at', q => q.in('job_id', vnJobs.slice(i, i + 50).map(j => j.id))))
   }
   vnApps = vnApps.filter(a => !String(a.applicant_email || '').toLowerCase().endsWith('@likelion.net'))
+
+  // 파이프라인 이메일·소스 (채널 귀속 + 시트 탭별 유입 대조에 공용)
+  const candRows = await fetchAll<any>(ktc, 'candidates', 'email, sheet_source')
+  const candEmails = new Set(candRows.map(c => String(c.email || '').toLowerCase()).filter(Boolean))
+  const candBySource: Record<string, number> = {}
+  for (const c of candRows) candBySource[c.sheet_source || '(null)'] = (candBySource[c.sheet_source || '(null)'] || 0) + 1
 
   // ── 독립 재집계: 시트 (JD·면접·입사·매출) ──
   let sheet: any = null
@@ -130,11 +138,8 @@ export async function GET() {
       const key = String(r[2] || '').trim().toLowerCase() || name
       if (!seen.has(key)) { seen.add(key); ivPeople++ }
     }
-    // 채널 귀속용 이메일 셋 (candidates + FYI) + 이름 폴백용 final_passed 이름 셋
+    // 채널 귀속: candidates 이메일(위에서 공용 셋) + FYI + 이름 폴백용 final_passed 이름 셋
     // (지원 이메일 ≠ 온보딩 이메일 실사례가 있어 이메일 단독 매칭은 누락 발생)
-    const candEmails = new Set(
-      (await fetchAll<any>(ktc, 'candidates', 'email')).map(c => String(c.email || '').toLowerCase()).filter(Boolean),
-    )
     const fyiEmails = new Set(fyiApps.map(a => String(a.applicant_email).toLowerCase()))
     const fp = await fetchAll<any>(ktc, 'candidates', 'full_name, email, applied_company, applied_job, sheet_source', q => q.eq('pipeline_status', 'final_passed'))
     const norm = (s: any) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim()
@@ -194,6 +199,56 @@ export async function GET() {
     }
   }
 
+  // ── 독립 재집계: 지원 건 = CANDIDATE DATA 시트 직접 (2026-07-27 부터 대시보드와 같은 원천) ──
+  // 탭별로 지원 건을 세면서 파이프라인 유입 여부(이메일 대조)도 함께 본다 —
+  // 신규 탭이 ktc-support 동기화에 안 붙은 채 지원만 쌓이는 상황을 자동 감지하기 위함.
+  const CANDIDATE = process.env.CANDIDATE_DATA_SHEET_ID || '13pvv1vQ8PklkIjOfuILD5sbKZJu0CRkiaXRXxUTOp88'
+  const APP_SKIP = new Set(['log', 'FYI', 'Form Responses 1']) // aggregate 와 동일 스킵 규칙
+  let sheetAppsTotal: number | null = null
+  const tabStats: any[] = []
+  if (sheet) {
+    try {
+      const cMeta = await sheet.spreadsheets.get({ spreadsheetId: CANDIDATE })
+      const tabs: string[] = (cMeta.data.sheets || [])
+        .map((s: any) => s.properties?.title || '')
+        .filter((t: string) => t && !APP_SKIP.has(t))
+      const cRes = await sheet.spreadsheets.values.batchGet({ spreadsheetId: CANDIDATE, ranges: tabs.map(t => `'${t}'!A1:Z`) })
+      const values: any[][][] = (cRes.data.valueRanges || []).map((v: any) => v.values || [])
+      let total = 0
+      tabs.forEach((t, i) => {
+        const rows = values[i]
+        // 헤더행 = Email 류 열이 있는 첫 행. 이메일 열이 아예 없는 탭(예: Vieclam24h)은
+        // 첫 행을 헤더로 보고 이름 열만으로 센다 (aggregate 의 parseAppSheet 와 같은 폴백 방향).
+        let hIdx = rows.findIndex((r: any[]) => r.some((c: any) => /e-?mail/i.test(String(c || '').trim())))
+        if (hIdx < 0) hIdx = 0
+        const H: string[] = (rows[hIdx] || []).map((c: any) => String(c || '').replace(/\n/g, ' ').trim())
+        const eCol = H.findIndex(h => /e-?mail/i.test(h))
+        const nCol = H.findIndex(h => /name|họ|tên/i.test(h))
+        let apps = 0
+        const emails = new Set<string>()
+        for (const r of rows.slice(hIdx + 1)) {
+          const name = nCol >= 0 ? String(r[nCol] || '').trim() : ''
+          const email = eCol >= 0 ? String(r[eCol] || '').trim().toLowerCase() : ''
+          if (!name && !email) continue
+          apps++
+          if (email) emails.add(email)
+        }
+        total += apps
+        const inPipe = [...emails].filter(e => candEmails.has(e)).length
+        tabStats.push({
+          탭: t, 지원건: apps, 고유이메일: emails.size,
+          파이프라인유입: inPipe, 파이프라인미유입: emails.size - inPipe,
+          candidates소스인원: candBySource[t] || 0,
+        })
+      })
+      sheetAppsTotal = total
+    } catch {
+      sheetAppsTotal = null // 시트 실패 시 재적재본 기준으로 폴백 (대시보드 폴백과 동일 방향)
+    }
+  }
+  // 시트 탭에 지원이 쌓이는데 파이프라인에 이메일이 안 들어온 탭 = 스크리닝 누락 위험
+  const tabsMissingPipeline = tabStats.filter(t => t.파이프라인미유입 > 0)
+
   // 구 상태값 잔존 인원 명단
   const legacyList = (await fetchAll<any>(ktc, 'candidates', 'full_name, email, sheet_source, applied_job, applied_company', q => q.eq('pipeline_status', 'ai_interview_passed')))
     .map(c => ({ name: c.full_name, email: c.email, channel: c.sheet_source, job: c.applied_job, company: c.applied_company }))
@@ -213,8 +268,16 @@ export async function GET() {
     { name: '오퍼·계약 도달', dashboard: f.offer, source: (st.offer || 0) + (st.final_passed || 0), note: '' },
     { name: '입사 (final_passed)', dashboard: f.hired, source: st.final_passed || 0, note: '' },
     { name: '입사 = 채널 표 입사 합', dashboard: f.hired, source: chanSumHires, note: '내부 일관성' },
-    { name: '지원 건', dashboard: d.supply.applicationsTotal, source: expectedApps, note: `ktc_applications ${appsKtc} + FYI ${fyiApps.length}` },
-    { name: '월별 합계 ≤ 지원 건', dashboard: monthlySum, source: expectedApps, note: `날짜 파싱 커버리지 ${expectedApps ? Math.round((monthlySum / expectedApps) * 100) : 0}% (최근 12개월 창)` },
+    {
+      name: '지원 건',
+      dashboard: d.supply.applicationsTotal,
+      source: sheetAppsTotal != null ? sheetAppsTotal + fyiApps.length : expectedApps,
+      tol: 2, // 라이브 시트라 두 읽기 사이에 지원이 새로 붙을 수 있음
+      note: sheetAppsTotal != null
+        ? `CANDIDATE DATA 시트 ${sheetAppsTotal} + FYI 라이브 ${fyiApps.length} · 재적재본(ktc_applications ${appsKtc})은 진단 참조`
+        : `시트 읽기 실패 — 재적재본 폴백 ktc_applications ${appsKtc} + FYI ${fyiApps.length}`,
+    },
+    { name: '월별 합계 ≤ 지원 건', dashboard: monthlySum, source: sheetAppsTotal != null ? sheetAppsTotal + fyiApps.length : expectedApps, note: '날짜 파싱 커버리지 (최근 12개월 창)' },
     { name: '인재풀 이력서', dashboard: d.supply.talentPoolResume, source: resume, note: '' },
     { name: '인재풀 공개', dashboard: d.supply.talentPoolPublic, source: resumePublic, note: '' },
     { name: '진행중: 스크리닝 대기', dashboard: d.matching.inProgress.screeningQueue, source: st.new || 0, note: '' },
@@ -234,7 +297,13 @@ export async function GET() {
     { name: 'VN 기업 수', dashboard: d.vietnam.companies, source: new Set(vnJobs.map(j => String(j.company || '').trim().toLowerCase()).filter(Boolean)).size, note: '' },
     { name: 'VN 지원 건', dashboard: d.vietnam.applications, source: vnApps.length, note: '' },
     { name: 'VN 기업 열람', dashboard: d.vietnam.viewed, source: vnApps.filter(a => a.viewed_at).length, note: '' },
-  ].map(c => ({ ...c, ok: c.dashboard === c.source || (c.name.startsWith('월별') && c.dashboard <= c.source) }))
+  ].map((c: any) => ({
+    ...c,
+    ok:
+      c.tol != null ? Math.abs(c.dashboard - c.source) <= c.tol
+      : c.name.startsWith('월별') ? c.dashboard <= c.source
+      : c.dashboard === c.source,
+  }))
 
   // 퍼널 단조 감소 (단계별 역전 없음)
   const order = ['people', 'screened', 'delivered', 'interview', 'offer', 'hired']
@@ -251,12 +320,18 @@ export async function GET() {
       fyiUniqApplicants: fyiUniq,
       finalPassedNotInEmployeeSheet: finalPassedNotInEmp,
       employeeTotal: empTotal,
+      // 재적재본 편차 (원천 아님·관찰용): landing 중복성 행, 신규 탭 미반영이 여기서 드러난다
+      지원건_시트직접: sheetAppsTotal,
+      지원건_재적재본: appsKtc,
     },
     details: {
       입사했는데_Employee탭_미기입: fpNotInEmpList,
       구상태값_ai_interview_passed_잔존: legacyList,
       귀속입사자_매출현황_기입상태: revenueStatus,
       매출현황에만_있고_Employee와_이름불일치: revRowsUnmatched,
+      // 탭별 지원 건 + 파이프라인 유입 대조 — 미유입>0 이면 최근 지원 대기(동기화 지연) 또는 동기화 대상 누락
+      시트탭별_지원건_파이프라인유입: tabStats,
+      파이프라인_미유입_있는_탭: tabsMissingPipeline.map(t => t.탭),
     },
     checks,
   })

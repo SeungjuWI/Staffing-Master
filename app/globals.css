@@ -427,6 +427,29 @@ tbody tr:nth-last-child(-n + 3) .jdcell .tip { top: auto; bottom: calc(100% - 5p
 /* 기업별 성과 — 마이너스 이익 경고 */
 .neg { color: var(--bad-text); font-weight: 650; }
 
+/* ═══ 공고 선택 — 몇 개만 골라 보기 (진행 중 표) ═══ */
+th.selcell, td.selcell { width: 28px; padding-right: 0; text-align: center; }
+/* 체크박스 열이 first-child 가 되므로, 공고명 열(그 다음 열)의 좌측 정렬을 되살린다 */
+th.selcell + th, td.selcell + td { text-align: left; padding-left: 2px; }
+.selcell input {
+  accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer;
+  vertical-align: -2px; opacity: 0.45; transition: opacity 0.13s;
+}
+.selcell input:checked, tbody tr:hover .selcell input, .selcell input:focus-visible { opacity: 1; }
+.seltools {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 12px;
+  font-size: 12.5px; color: var(--ink-2); animation: rise 0.3s var(--ease) both;
+}
+.seltools b { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+.selbtn {
+  font-family: inherit; border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+  border-radius: 7px; padding: 3px 11px; font-size: 12px; font-weight: 550; cursor: pointer;
+  transition: color 0.13s, border-color 0.13s, background 0.13s;
+}
+.selbtn:hover { color: var(--ink); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.selbtn:disabled { opacity: 0.45; cursor: default; }
+.selbtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
 /* 미터 (충원율) */
 .meter { display: inline-flex; align-items: center; gap: 8px; }
 .meter .track { width: 72px; height: 8px; border-radius: 4px; background: var(--accent-track); overflow: hidden; }
