@@ -328,6 +328,11 @@ th {
   padding: 6px 8px; border-bottom: 1px solid var(--baseline); white-space: nowrap;
 }
 th:first-child, td:first-child { text-align: left; padding-left: 2px; }
+/* 정렬 가능한 헤더 (공고 표) — 클릭 토글: 내림 → 오름 → 기본(판정) 정렬 */
+th.sortable { cursor: pointer; user-select: none; transition: color 0.13s; }
+th.sortable:hover { color: var(--ink); }
+th.sortable.on { color: var(--ink); font-weight: 650; }
+th .sarr { display: inline-block; width: 11px; font-size: 8.5px; margin-left: 2px; vertical-align: 1px; color: var(--accent-text); }
 th:last-child, td:last-child { padding-right: 2px; }
 td {
   text-align: right; padding: 8.5px 8px; border-bottom: 1px solid var(--grid);

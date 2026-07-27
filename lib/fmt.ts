@@ -47,6 +47,7 @@ export function fmtDateTime(iso: string): string {
 // 채널 키 → 화면 표기
 const CHANNEL_LABELS: Record<string, string> = {
   'ITviec-api': 'ITviec',
+  'it-viec-manual': 'ITviec (수동)',
   'top-dev': 'TopDev',
   'top-cv': 'TopCV',
   'jobs-go': 'JobsGO',
@@ -67,6 +68,7 @@ export const channelLabel = (key: string) => CHANNEL_LABELS[key] || (/^external-
 // 채널 성격 — 유료(게재비·광고 집행) / 자사(우리 플랫폼) / 무료(무료 게재)
 const CHANNEL_KIND: Record<string, 'paid' | 'own' | 'free'> = {
   'ITviec-api': 'paid',
+  'it-viec-manual': 'paid',
   'top-dev': 'paid',
   LinkedIn: 'paid',
   FYI: 'own',

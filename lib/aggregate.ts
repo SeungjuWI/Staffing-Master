@@ -24,6 +24,8 @@ import { mockData } from './mock'
 const MASTER_SHEET_ID = process.env.MASTER_SHEET_ID || '1mR1_-a3LmjxAbbox3tTKBu6WYwDbfBYKmPB6TP9EnKI'
 const COST_SHEET_ID = process.env.COST_SHEET_ID || '1PEWHeAtx5nfxODQr_Db1soh-scl3Qg5Uw-fnjRziF8A'
 const KTC_OPS_SHEET_ID = process.env.KTC_OPS_SHEET_ID || '1opr9KoR7KRZ31CJDNGM63xbA2rPZjPuNaG6eeLPTXjM'
+// 지원자 원본 시트 (채널별 탭) — 지원 건은 여기가 진실의 원천
+const CANDIDATE_SHEET_ID = process.env.CANDIDATE_DATA_SHEET_ID || '13pvv1vQ8PklkIjOfuILD5sbKZJu0CRkiaXRXxUTOp88'
 
 const CODE_RE = /[A-Z]{2,6}\d{3,4}/g
 
@@ -92,6 +94,21 @@ const EARLY_DAYS = 14 // 수주 2주 미만은 판정 유예 (모집 초기)
 // VN(UTC+7) 기준 YYYY-MM
 const toVNMonth = (iso: string) => new Date(new Date(iso).getTime() + 7 * 3600000).toISOString().slice(0, 7)
 
+// 월별 카운트 맵 → 연속 월 축 (파싱 오류로 생긴 미래 월 제거, 빈 월 0 채움, 최대 12개월)
+function toMonthSeries(byMonth: Record<string, number>, nowMonth: string): MonthPoint[] {
+  const valid = Object.keys(byMonth).filter(m => m <= nowMonth).sort()
+  if (!valid.length) return []
+  const addMonths = (m: string, delta: number) => {
+    const [y, mo] = m.split('-').map(Number)
+    const t = y * 12 + (mo - 1) + delta
+    return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, '0')}`
+  }
+  const first = valid[0] > addMonths(nowMonth, -11) ? valid[0] : addMonths(nowMonth, -11)
+  const out: MonthPoint[] = []
+  for (let m = first; m <= nowMonth; m = addMonths(m, 1)) out.push({ month: m, count: byMonth[m] || 0 })
+  return out
+}
+
 // 탭별 날짜 포맷 파싱 (ktcCandidatesSync 이식) — 미국식 m/d 는 LinkedIn·구글폼 계열만
 const MONTH_FIRST_TABS = new Set(['LinkedIn', 'Form Responses 1', 'legacy-sheet'])
 function parseAppliedAt(raw: unknown, sheetSource: string): string | null {
@@ -114,6 +131,56 @@ function parseAppliedAt(raw: unknown, sheetSource: string): string | null {
   if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${y}-${pad(mo)}-${pad(d)}T${pad(h)}:${pad(mi)}:00+07:00`
+}
+
+// ── CANDIDATE DATA 시트 파싱 (지원 건) ──────────────────────
+// 탭별 헤더 힌트 (2026-07-27 실측) — 명시 힌트가 없거나 헤더가 바뀌면 정규식 폴백으로 해석.
+// FYI 탭은 salarymap DB 라이브가 정답이라 제외, Form Responses 1 은 기존 집계 관행대로 제외.
+const APP_SKIP_TABS = new Set(['log', 'FYI', 'Form Responses 1'])
+const APP_COL_HINTS: Record<string, { email?: string; name?: string; job?: string; code?: string; date?: string }> = {
+  'landing-page': { email: 'Email', name: 'Họ & Tên', job: 'Applied Job', code: 'Job ID', date: 'Ngày nộp' },
+  'ITviec-api': { email: 'Email', name: 'Họ & Tên', job: 'Job Title', code: 'Job ID', date: 'Ngày nộp' },
+  'top-dev': { email: 'Candidate Email', name: 'Candidate Fullname', job: 'Job title', date: 'Applied date' },
+  'jobs-go': { email: 'Email', name: 'Họ tên', job: 'Applied Job', date: 'Thời gian' },
+  'top-cv': { email: 'Email', name: 'Họ Tên', date: 'Ngày tiếp nhận' },
+  'it-viec-manual': { email: 'Email', name: 'Name', job: 'Job', date: 'Submitted time' },
+}
+const APP_COL_FALLBACK_RE = {
+  email: /^e-?mail$/i,
+  name: /name|họ|tên/i,
+  job: /applied\s*job|job\s*title|^job$|vị trí/i,
+  code: /job\s*id/i,
+  date: /ngày nộp|applied\s*date|date submitted|thời gian|submitted|ngày/i,
+} as const
+
+function parseAppSheet(tab: string, rows: any[][]): any[] {
+  if (!rows.length) return []
+  const hint = APP_COL_HINTS[tab] || {}
+  const H = rows[0].map((c: any) => String(c || '').replace(/\n/g, ' ').trim())
+  const col = (key: keyof typeof APP_COL_FALLBACK_RE) => {
+    if (hint[key]) {
+      const i = H.indexOf(hint[key]!)
+      if (i >= 0) return i
+    }
+    return H.findIndex(h => APP_COL_FALLBACK_RE[key].test(h))
+  }
+  const ci = { email: col('email'), name: col('name'), job: col('job'), code: col('code'), date: col('date') }
+  const out: any[] = []
+  for (const r of rows.slice(1)) {
+    const name = ci.name >= 0 ? String(r[ci.name] || '').trim() : ''
+    const email = ci.email >= 0 ? String(r[ci.email] || '').trim() : ''
+    if (!name && !email) continue // 빈 행·집계 행
+    const jobText = ci.job >= 0 ? String(r[ci.job] || '').trim() : ''
+    const codeRaw = ci.code >= 0 ? String(r[ci.code] || '').trim() : ''
+    out.push({
+      sheet_source: tab,
+      email: email || null,
+      applied_job: jobText || null,
+      job_code: extractJobCode(codeRaw) || extractJobCode(jobText),
+      applied_at: ci.date >= 0 ? parseAppliedAt(r[ci.date], tab) : null,
+    })
+  }
+  return out
 }
 
 async function fetchAll<T>(sb: SupabaseClient, table: string, select: string, tweak?: (q: any) => any): Promise<T[]> {
@@ -200,7 +267,24 @@ async function fetchRaw(): Promise<Raw> {
   // 모든 원본 로드는 서로 독립적 → promise 를 먼저 전부 띄우고(아래) 한 번에 await 한다.
   // (기존엔 FYI 지원·베트남·비용이 순차 await 라 콜드 fetch 시간이 합산됐다 → 이제 임계경로 = 가장 느린 1개)
   const pCandidates = grab('파이프라인(candidates)', () => fetchAll<any>(ktc, 'candidates', 'full_name, sheet_source, email, applied_job, applied_date, pipeline_status'), [])
-  const pApplications = grab('지원 건(ktc_applications)', () => fetchAll<any>(fyi, 'ktc_applications', 'sheet_source, job_code, applied_at'), [])
+  // 지원 건 = CANDIDATE DATA 시트 직접 (원본). 기존엔 salarymap ktc_applications(재적재본)를
+  // 읽었는데, 동기화 크론이 죽자 5일치 지원이 조용히 빠졌다(2026-07-27, GB3001 시트 9 vs DB 6).
+  // 시트가 진실의 원천이므로 직접 읽고, 크레덴셜 없거나 시트 읽기 실패 시에만 재적재본 폴백.
+  const pApplications = grab('지원 건(CANDIDATE DATA 시트)', async () => {
+    if (sheets) {
+      try {
+        const meta = await sheets.spreadsheets.get({ spreadsheetId: CANDIDATE_SHEET_ID })
+        const tabs: string[] = (meta.data.sheets || [])
+          .map((s: any) => s.properties?.title || '')
+          .filter((t: string) => t && !APP_SKIP_TABS.has(t))
+        const values = await batchGet(CANDIDATE_SHEET_ID, tabs.map(t => `'${t}'!A1:Z`))
+        return tabs.flatMap((t, i) => parseAppSheet(t, values[i] || []))
+      } catch (e: any) {
+        warnings.push(`CANDIDATE DATA 시트 읽기 실패(${e.message}) — 지원 건은 재적재본(DB)으로 폴백`)
+      }
+    }
+    return fetchAll<any>(fyi, 'ktc_applications', 'sheet_source, job_code, applied_at, email')
+  }, [])
   const pResume = grab('인재풀(이력서)', async () => {
     const { count, error } = await fyi.from('user_profiles').select('id', { count: 'exact', head: true }).not('resume_url', 'is', null)
     if (error) throw new Error(error.message)
@@ -341,6 +425,21 @@ async function fetchRaw(): Promise<Raw> {
   const [empSheet, revSheet] = ops
   const { vnJobs, vnApps } = vn
 
+  // 파이프라인 동기화 지연 감지 — 시트(지원 원본)에는 있는데 candidates 가 못 따라오면
+  // 스크리닝~입사 단계 숫자가 조용히 옛것이 된다. 날짜 파싱 오류로 생긴 미래 값은 배제(+1일 여유).
+  const nowIso = new Date(Date.now() + 86400000).toISOString()
+  const maxIso = (vals: (string | null)[]) => vals.reduce<string>((m, v) => (v && v <= nowIso && v > m ? v : m), '')
+  const candMax = maxIso(candidates.map((c: any) => parseAppliedAt(c.applied_date, c.sheet_source)))
+  const appMax = maxIso(applications.map((a: any) => a.applied_at))
+  if (candMax && appMax) {
+    const lagDays = (new Date(appMax).getTime() - new Date(candMax).getTime()) / 86400000
+    if (lagDays > 3) {
+      warnings.push(
+        `파이프라인 동기화가 지원 시트보다 ${Math.floor(lagDays)}일 뒤처져 있습니다 (시트 최신 지원 ${appMax.slice(0, 10)} vs 파이프라인 ${candMax.slice(0, 10)}) — 스크리닝~입사 단계 숫자에 최신 지원이 아직 없음, ktc-support 동기화 점검 필요`,
+      )
+    }
+  }
+
   return { warnings, candidates, applications, resumeCount, publicCount, jdSheet, ivSheet, empSheet, revSheet, fyiApps, vnJobs, vnApps, cost, fetchedAt: Date.now() }
 }
 
@@ -375,6 +474,62 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     viewed: vnInP.filter(a => a.viewed_at).length,
   }
 
+  // ── 공고 원장 헤더 해석 (공고 귀속 맵에 먼저 필요해서 여기서) ──
+  // 열 위치는 헤더 이름으로 찾는다 — 시트에 열이 추가/삭제돼도 안 깨지게(Employee 파싱과 동일 방식).
+  // 과거 인덱스 하드코딩(상태=11·인원=8) 탓에 컬럼이 밀리자 마감 공고가 계속 "진행 중"으로 남던 버그가 있었음.
+  // 헤더/열을 못 찾으면 실측 인덱스로 폴백. 헤더행은 "Job ID" 가 있는 행으로 탐지.
+  const jdHeaderIdx = jdSheet.findIndex((r: any[]) => r.some((c: any) => /job\s*id/i.test(String(c || ''))))
+  const jdH: any[] = jdHeaderIdx >= 0 ? jdSheet[jdHeaderIdx] : []
+  const jdCol = (re: RegExp, fallback: number) => {
+    const i = jdH.findIndex((c: any) => re.test(String(c || '').replace(/\n/g, ' ').trim()))
+    return i >= 0 ? i : fallback
+  }
+  const JC = {
+    code: jdCol(/job\s*id/i, 0),
+    company: jdCol(/company/i, 1),
+    title: jdCol(/job\s*title/i, 2),
+    headcount: jdCol(/headcount/i, 6),
+    received: jdCol(/date\s*received/i, 7),
+    status: jdCol(/job\s*status/i, 9),
+  }
+  const jdDataRows = jdHeaderIdx >= 0 ? jdSheet.slice(jdHeaderIdx + 1) : jdSheet.slice(3)
+
+  // ── 공고 귀속 리졸버 ──────────────────────────────────────
+  // 랜딩페이지 지원은 applied_job 에 코드 없이 제목만 남는 실사례(GB3001 전원)가 있어,
+  // 앞머리 코드 추출만으로는 683건(13%)이 공고 미귀속 → 공고별 지원 수가 0 으로 깨진다 (2026-07-27 발견).
+  // 폴백 순서: ① 앞머리 코드 ② 문자열 어딘가의 코드("• [MT702] …" 류 — 시트에 있는 공고만 인정)
+  // ③ JD 시트 제목 정확 일치 (유니크 제목만 — "Full-stack Developer" 처럼 중복 제목은 매칭 금지)
+  // ④ 지원 건(ktc_applications)의 이메일 → 단일 공고 코드
+  const sheetCodes = new Set<string>()
+  const titleToCode: Record<string, string | null> = {}
+  for (const r of jdDataRows) {
+    const code = String(r[JC.code] || '').trim()
+    if (!code) continue
+    sheetCodes.add(code)
+    const t = normName(r[JC.title])
+    if (t) titleToCode[t] = titleToCode[t] === undefined ? code : null
+  }
+  const emailToCodes: Record<string, Set<string>> = {}
+  for (const a of applications) {
+    const e = String(a.email || '').toLowerCase().trim()
+    if (!e || !a.job_code) continue
+    ;(emailToCodes[e] = emailToCodes[e] || new Set()).add(a.job_code)
+  }
+  const codeForCandidate = (c: any): string | null => {
+    const direct = extractJobCode(c.applied_job)
+    if (direct) return direct
+    const anywhere = (String(c.applied_job || '').match(CODE_RE) || []).find(k => sheetCodes.has(k))
+    if (anywhere) return anywhere
+    const byTitle = titleToCode[normName(c.applied_job)]
+    if (byTitle) return byTitle
+    const ec = emailToCodes[String(c.email || '').toLowerCase().trim()]
+    if (ec && ec.size === 1) {
+      const k: string = ec.values().next().value!
+      if (sheetCodes.has(k)) return k
+    }
+    return null
+  }
+
   // ── 전체 패스 (기간 무관): 진행 중 스냅샷·귀속 맵·누적 입사 ──
   // 공고 판정용 누적치도 여기서 — 기간 보기에서도 판정은 스톡(현재 상태·누적 지원자) 기준.
   const chanByEmailAll: Record<string, string> = {}
@@ -388,7 +543,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     statusCount[st] = (statusCount[st] || 0) + 1
     if (st === 'final_passed') finalPassedAll++
     if (e && !chanByEmailAll[e]) chanByEmailAll[e] = c.sheet_source || '(미상)'
-    const code = extractJobCode(c.applied_job)
+    const code = codeForCandidate(c)
     if (code) {
       const j = jdAll(code)
       j.people++
@@ -419,7 +574,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
 
   for (const c of periodCandidates) {
     const ch = c.sheet_source || '(미상)'
-    const code = extractJobCode(c.applied_job)
+    const code = codeForCandidate(c)
     const st = c.pipeline_status || 'new'
     bump(ch, 'people')
     if (SCREEN_PASS.has(st)) { bump(ch, 'docPass'); screenPass++ }
@@ -574,25 +729,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       return b.people - a.people
     })
 
-  // ── 공고 원장 → JdRow ─────────────────────────────────────
-  // 열 위치는 헤더 이름으로 찾는다 — 시트에 열이 추가/삭제돼도 안 깨지게(Employee 파싱과 동일 방식).
-  // 과거 인덱스 하드코딩(상태=11·인원=8) 탓에 컬럼이 밀리자 마감 공고가 계속 "진행 중"으로 남던 버그가 있었음.
-  // 헤더/열을 못 찾으면 실측 인덱스로 폴백. 헤더행은 "Job ID" 가 있는 행으로 탐지.
-  const jdHeaderIdx = jdSheet.findIndex((r: any[]) => r.some((c: any) => /job\s*id/i.test(String(c || ''))))
-  const jdH: any[] = jdHeaderIdx >= 0 ? jdSheet[jdHeaderIdx] : []
-  const jdCol = (re: RegExp, fallback: number) => {
-    const i = jdH.findIndex((c: any) => re.test(String(c || '').replace(/\n/g, ' ').trim()))
-    return i >= 0 ? i : fallback
-  }
-  const JC = {
-    code: jdCol(/job\s*id/i, 0),
-    company: jdCol(/company/i, 1),
-    title: jdCol(/job\s*title/i, 2),
-    headcount: jdCol(/headcount/i, 6),
-    received: jdCol(/date\s*received/i, 7),
-    status: jdCol(/job\s*status/i, 9),
-  }
-  const jdDataRows = jdHeaderIdx >= 0 ? jdSheet.slice(jdHeaderIdx + 1) : jdSheet.slice(3)
+  // ── 공고 원장 → JdRow (헤더 해석은 위 공고 귀속 리졸버 직전에서 완료) ──
   const jds: JdRow[] = jdDataRows
     .filter((r: any[]) => String(r[JC.code] || '').trim())
     .map((r: any[]) => {
@@ -679,20 +816,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     { key: 'hired', label: '입사', count: finalPassed },
   ]
 
-  // 월별 추이: 파싱 오류로 생긴 미래 월 제거 후, 빈 월을 0 으로 채워 연속 12개월 축
-  const validMonths = Object.keys(monthly).filter(m => m <= nowMonth).sort()
-  const monthlyArr: MonthPoint[] = []
-  if (validMonths.length) {
-    const addMonths = (m: string, delta: number) => {
-      const [y, mo] = m.split('-').map(Number)
-      const t = y * 12 + (mo - 1) + delta
-      return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, '0')}`
-    }
-    const first = validMonths[0] > addMonths(nowMonth, -11) ? validMonths[0] : addMonths(nowMonth, -11)
-    for (let m = first; m <= nowMonth; m = addMonths(m, 1)) {
-      monthlyArr.push({ month: m, count: monthly[m] || 0 })
-    }
-  }
+  // 월별 지원 추이: 미래 월 제거 + 빈 월 0 채움 (연속 12개월 축)
+  const monthlyArr = toMonthSeries(monthly, nowMonth)
 
   return {
     generatedAt: new Date(fetchedAt).toISOString(),
@@ -763,7 +888,7 @@ const getCachedByPeriod = unstable_cache(
       '30d': computeFromRaw(raw, '30d', at),
     }
   },
-  ['staffing-master-data-v3'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v5'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 
