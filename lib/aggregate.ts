@@ -20,6 +20,7 @@ import { unstable_cache } from 'next/cache'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import type { Channel, CompanyPerf, FunnelStage, JdRow, MasterData, MonthPoint, VietnamBlock } from './types'
 import { mockData } from './mock'
+import { buildAudit } from './audit'
 
 const MASTER_SHEET_ID = process.env.MASTER_SHEET_ID || '1mR1_-a3LmjxAbbox3tTKBu6WYwDbfBYKmPB6TP9EnKI'
 const COST_SHEET_ID = process.env.COST_SHEET_ID || '1PEWHeAtx5nfxODQr_Db1soh-scl3Qg5Uw-fnjRziF8A'
@@ -223,11 +224,13 @@ type Raw = {
   resumeCount: number
   publicCount: number
   jdSheet: any[][]
+  jdDaily: any[][]
   empSheet: any[][]
   revSheet: any[][]
   toSheet: any[][]
+  opsDash: any[][]
   fyiApps: any[]
-  fyiJobById: Record<string, { title: string; company: string; sourceId: string }> // FYI 공고 id → 제목·회사·공고코드(source_id)
+  fyiJobById: Record<string, { title: string; company: string; sourceId: string; status: string }> // FYI 공고 id → 제목·회사·공고코드(source_id)
   vnJobs: any[]
   vnApps: any[]
   cost: CostData | null
@@ -301,18 +304,24 @@ async function fetchRaw(): Promise<Raw> {
     return count || 0
   }, 0)
   // INTERVIEW 탭은 더 이상 읽지 않는다 — 폐지된 자체 폰 인터뷰 기록이라 면접 집계에서 제외 (2026-07-28)
-  const pMaster = grab('Master 시트(공고)', () => batchGet(MASTER_SHEET_ID, ["'JD EXECUTION'!A1:N"]), [[]])
+  // JD DAILY 는 집계에 안 쓰고, 하단의 "코드 미귀속 CV N건" 경고행만 점검 탭에서 읽는다
+  const pMaster = grab('Master 시트(공고)', () => batchGet(MASTER_SHEET_ID, ["'JD EXECUTION'!A1:N", "'📊 JD DAILY'!A1:P"]), [[], []])
   // TO_Table_수정 = TO 단위 원장 (TO 1개당 1행, 현재 상태 매칭/진행중/이탈). 운영이 관리하는 정본이라
   // TO·충원은 이걸 따른다 — JD EXECUTION 의 Headcount 열은 갱신이 밀려 11건이 어긋나 있었다 (2026-07-28)
-  const pOps = grab('KTC Ops 시트(입사·매출·TO)', () => batchGet(KTC_OPS_SHEET_ID, ["'Employee'!A1:T", "'매출현황'!A1:N", "'TO_Table_수정'!A1:R"]), [[], [], []])
+  // Dashboard 탭 = 팀이 보는 공식 KPI. 집계에는 안 쓰고 점검 탭에서 우리 숫자와 대조만 한다.
+  const pOps = grab(
+    'KTC Ops 시트(입사·매출·TO·KPI)',
+    () => batchGet(KTC_OPS_SHEET_ID, ["'Employee'!A1:Z", "'매출현황'!A1:N", "'TO_Table_수정'!A1:R", "'Dashboard'!A1:AC30"]),
+    [[], [], [], []],
+  )
 
   // FYI(KTC 공고) 지원자 — salarymap 라이브. 공고 제목도 함께 가져와 공고별 귀속에 쓴다
   // (FYI 직접 지원은 시트 탭에 없어서, 제목 매칭 없이는 공고별 '지원'에서 통째로 빠진다 —
   //  실사례: FPT403이 FYI 지원 16건을 받고도 대시보드에 0건으로 떠서 대표가 오판할 뻔함, 2026-07-28)
   const pFyiApps = grab('FYI 지원', async () => {
-    const jobs = await fetchAll<any>(fyi, 'jobs', 'id, title, company, source_id', q => q.eq('source', 'ktc'))
-    const byId: Record<string, { title: string; company: string; sourceId: string }> = {}
-    for (const j of jobs) byId[j.id] = { title: String(j.title || ''), company: String(j.company || ''), sourceId: String(j.source_id || '') }
+    const jobs = await fetchAll<any>(fyi, 'jobs', 'id, title, company, source_id, status', q => q.eq('source', 'ktc'))
+    const byId: Record<string, { title: string; company: string; sourceId: string; status: string }> = {}
+    for (const j of jobs) byId[j.id] = { title: String(j.title || ''), company: String(j.company || ''), sourceId: String(j.source_id || ''), status: String(j.status || '') }
     const ids = jobs.map(j => j.id)
     let apps: any[] = []
     for (let i = 0; i < ids.length; i += 50) {
@@ -322,7 +331,7 @@ async function fetchRaw(): Promise<Raw> {
       fyiApps: apps.filter(a => a.applicant_email && !String(a.applicant_email).toLowerCase().endsWith('@likelion.net')),
       fyiJobById: byId,
     }
-  }, { fyiApps: [] as any[], fyiJobById: {} as Record<string, { title: string; company: string; sourceId: string }> })
+  }, { fyiApps: [] as any[], fyiJobById: {} as Record<string, { title: string; company: string; sourceId: string; status: string }> })
 
   // 베트남 매칭 트랙 (FYI 자체 공고 — ktc-support 미경유)
   const pVn = grab('베트남 매칭(FYI 자체 공고)', async () => {
@@ -467,8 +476,8 @@ async function fetchRaw(): Promise<Raw> {
   // 위에서 띄운 promise 를 전부 한 번에 대기 (콜드 fetch = 가장 느린 1개 시간)
   const [candidates, applications, resumeCount, publicCount, master, ops, fyiWrap, vn, cost] =
     await Promise.all([pCandidates, pApplications, pResume, pPublic, pMaster, pOps, pFyiApps, pVn, pCost])
-  const [jdSheet] = master
-  const [empSheet, revSheet, toSheet] = ops
+  const [jdSheet, jdDaily] = master
+  const [empSheet, revSheet, toSheet, opsDash] = ops
   const { fyiApps, fyiJobById } = fyiWrap
   const { vnJobs, vnApps } = vn
 
@@ -487,7 +496,7 @@ async function fetchRaw(): Promise<Raw> {
     }
   }
 
-  return { warnings, candidates, applications, resumeCount, publicCount, jdSheet, empSheet, revSheet, toSheet, fyiApps, fyiJobById, vnJobs, vnApps, cost, fetchedAt: Date.now() }
+  return { warnings, candidates, applications, resumeCount, publicCount, jdSheet, jdDaily, empSheet, revSheet, toSheet, opsDash, fyiApps, fyiJobById, vnJobs, vnApps, cost, fetchedAt: Date.now() }
 }
 
 type ChanAcc = {
@@ -498,7 +507,7 @@ type ChanAcc = {
 
 // ── 기간별 집계 (캐시된 원본에서 동기 계산 — 시트 재요청 없음) ──
 function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData {
-  const { candidates, applications, fyiApps, jdSheet, empSheet, revSheet, toSheet } = raw
+  const { candidates, applications, fyiApps, jdSheet, jdDaily, empSheet, revSheet, toSheet, opsDash } = raw
 
   // 기간 필터 — "지원일 코호트": 해당 기간에 지원한 인재의 현재 도달 단계.
   // 스톡 지표(입사 누적·재직·매출·인재풀·오픈 공고)와 비용(시간 축 없음)은 항상 누적.
@@ -1014,6 +1023,15 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       companies: Object.values(byCompany).sort((a, b) => b.hires - a.hires),
       excludedHires,
     },
+    // 점검 탭 — 소스끼리 어긋나는 곳을 매 계산마다 다시 찾는다 (시트를 고치면 자동으로 사라짐)
+    audit: buildAudit({
+      jdSheet, toSheet, empSheet, revSheet, opsDash, jdDaily, candidates,
+      fyiJobs: Object.values(raw.fyiJobById),
+      jds,
+      funnel,
+      revenueUsd: attributedHires.reduce((s, h) => s + h.revenue, 0),
+      closedRe: CLOSED_RE,
+    }),
   }
 }
 
@@ -1040,7 +1058,7 @@ const getCachedByPeriod = unstable_cache(
       '30d': computeFromRaw(raw, '30d', at),
     }
   },
-  ['staffing-master-data-v14'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v15'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

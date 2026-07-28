@@ -4,6 +4,7 @@ import { fmtDateTime, fmtInt, fmtKrw, fmtPct, fmtSinceMonth, fmtUsd } from '@/li
 import { Funnel, MonthlyBars, StatTile } from '@/components/viz'
 import { ChannelHealthSummary, ChannelTable, CompanyTable, JdHealthSummary } from '@/components/tables'
 import { JdTable } from '@/components/jd-table'
+import { AuditBoard } from '@/components/audit-board'
 import { CountUp } from '@/components/count-up'
 import { RefreshButton } from '@/components/refresh-button'
 
@@ -14,6 +15,7 @@ const TABS = [
   { key: 'korea', label: '한국 매칭' },
   { key: 'vietnam', label: '베트남 매칭' },
   { key: 'talent', label: '인재·채널' },
+  { key: 'check', label: '점검' },
   { key: 'glossary', label: '용어' },
 ] as const
 type TabKey = (typeof TABS)[number]['key']
@@ -483,6 +485,10 @@ async function Dashboard({
           </section>
         </>
       )}
+
+      {/* ══ 점검 ══════════════════════════════════════ */}
+      {/* 소스끼리 어긋나는 곳을 상시 자동 대조 — 시트를 고치면 다음 새로고침에 항목이 사라진다 */}
+      {tab === 'check' && <AuditBoard groups={data.audit} />}
 
       {/* ══ 용어 ══════════════════════════════════════ */}
       {tab === 'glossary' && (

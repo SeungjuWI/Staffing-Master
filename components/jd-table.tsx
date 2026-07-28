@@ -82,13 +82,19 @@ function Donut({ parts, total }: { parts: DonutPart[]; total: number }) {
   )
 }
 
-// 충원 완료 사유 — TO 대비 몇 명 채웠는지 (초과 채용이면 초과분도 말해준다)
+// 충원 완료 사유 — TO 대비 몇 자리 채웠는지 (초과·이탈도 함께)
 function doneReason(j: JdRow): string {
   const to = j.headcount ?? 0
   const over = j.hiresAll - to
   return `TO ${fmtInt(to)}자리 중 ${fmtInt(j.hiresAll)}자리 채움${over > 0 ? ` (초과 ${fmtInt(over)})` : ''}${
     j.dropped > 0 ? ` · 이탈 ${fmtInt(j.dropped)}` : ''
   }`
+}
+
+// 충원이 끝났는데도 이 표(진행 중)에 남아 있는 이유 — 두 원장이 다른 말을 하고 있다는 신호.
+// 진행/마감은 JD EXECUTION 의 Job Status 로만 가르고, 충원은 TO_Table 매칭으로 센다.
+function doneWhyHere(j: JdRow): string {
+  return `공고 상태가 아직 '${j.status || '진행 중'}' 이라 진행 중 목록에 남아 있습니다 — 마감 처리 대상`
 }
 
 // 순항 사유 한 줄 (문제 공고 사유는 healthNote 재사용)
@@ -154,6 +160,7 @@ function JdDetail({ j, open, colSpan }: { j: JdRow; open: boolean; colSpan: numb
                 <>
                   <i className={`jdot ${view}`} /> <b>{HEALTH_META[view].label}</b> —{' '}
                   {view === 'done' ? doneReason(j) : view === 'good' ? goodReason(j) : healthNote(j)}
+                  {view === 'done' && <div className="dim" style={{ marginTop: 3 }}>{doneWhyHere(j)}</div>}
                 </>
               ) : (
                 <>마감{j.status ? ` (${j.status})` : ''}</>
@@ -331,7 +338,8 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                 const full = `${j.company} ${j.code}${j.title ? ` · ${j.title}` : ''}`
                 const view = jdView(j)
                 // 완료·순항은 툴팁 없음 (숫자 열이 이미 설명) — 문제/유예 공고만 호버로 판정 이유 노출
-                const note = open && view && view !== 'good' && view !== 'done' ? healthNote(j) : null
+                // 순항만 툴팁 없음 (숫자 열이 이미 설명). 완료는 "다 채웠는데 왜 여기 있나"를 설명해야 한다.
+                const note = !open || !view || view === 'good' ? null : view === 'done' ? doneWhyHere(j) : healthNote(j)
                 const expanded = xCode === j.code
                 return (
                   <Fragment key={j.code}>

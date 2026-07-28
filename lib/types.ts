@@ -134,4 +134,25 @@ export type MasterData = {
     companies: CompanyPerf[]    // 기업별 입사/재직/매출 (파이프라인 경유 입사만)
     excludedHires: number       // 파이프라인 미귀속 입사 — 집계에서 제외된 인원 (투명성 표기용)
   }
+
+  audit: AuditGroup[]           // 정합성 점검 — 소스끼리 어긋나는 곳 (시트를 고치면 자동으로 사라짐)
+}
+
+// ── 정합성 점검 (점검 탭) ──────────────────────────────────────
+export type AuditItem = {
+  id: string                    // A1, B2 … 팀과 대화할 때 쓰는 고정 번호
+  title: string
+  severity: 'high' | 'mid' | 'low'
+  count: number                 // 0 이면 목록에서 빠진다 (= 해결됨)
+  path: string                  // 파일 › 탭 › 열 — 어디를 고쳐야 하는지
+  rows?: { label: string; value: string }[] // 소스별 값 나란히
+  codes?: string[]              // 해당 공고·인원 명단
+  note?: string
+}
+
+export type AuditGroup = {
+  key: 'kpi' | 'to' | 'ledger' | 'hire' | 'posting'
+  title: string
+  hint: string
+  items: AuditItem[]
 }

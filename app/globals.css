@@ -570,3 +570,45 @@ details.fold > div { margin-top: 10px; animation: rise 0.35s var(--ease) both; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ═══ 점검 탭 — 정합성 대조 목록 ═══ */
+/* 심각도는 색 + 좌측 스트라이프로 이중 부호화 (판정 점과 같은 어휘: 적/호박/중립) */
+.adot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 5px; vertical-align: 0;
+}
+.adot.high { background: var(--bad); border-radius: 2.5px; }
+.adot.mid { background: var(--warn); }
+.adot.low { background: transparent; border: 1.5px solid var(--baseline); }
+
+.audlist { padding: 0; }
+.aud { padding: 16px 18px; border-bottom: 1px solid var(--baseline); border-left: 3px solid var(--sv); }
+.aud:last-child { border-bottom: 0; }
+.aud.high { --sv: var(--bad); }
+.aud.mid { --sv: var(--warn); }
+.aud.low { --sv: var(--border); }
+.aud-head { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.aud-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; font-weight: 700;
+  color: var(--sv); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--sv);
+}
+.aud-ttl { font-weight: 600; font-size: 15px; }
+.aud-cnt { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; margin-left: auto; }
+.aud-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; color: var(--muted); margin-top: 5px; word-break: break-word;
+}
+.aud-rows { display: grid; gap: 2px 14px; margin: 10px 0 0; font-size: 13.5px; }
+.aud-rows > div { display: flex; gap: 10px; align-items: baseline; }
+.aud-rows dt { color: var(--ink-2); min-width: 210px; }
+.aud-rows dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 550; }
+.aud-codes { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+.aud-codes span {
+  font-size: 12px; background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--ink-2);
+  border-radius: 5px; padding: 2px 7px; font-variant-numeric: tabular-nums;
+}
+.aud-codes .more { background: transparent; color: var(--muted); }
+.aud-note { margin: 9px 0 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
+.audfoot { font-size: 13.5px; color: var(--ink-2); }
+.audfoot p { margin: 0 0 6px; }
+.audfoot p:last-child { margin-bottom: 0; }

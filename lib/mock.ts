@@ -74,5 +74,6 @@ export function mockData(): MasterData {
       ],
       excludedHires: 0,
     },
+    audit: [],
   }
 }
