@@ -160,20 +160,29 @@ export function ChannelTable({ channels }: { channels: Channel[] }) {
 
 // ── 공고 판정 어휘 — aggregate 의 JdHealth 규칙과 짝 (용어 탭에 정의 문서화) ──
 // desc 는 호버 툴팁으로 노출 — 기준을 화면에서 바로 확인할 수 있게
-export const HEALTH_META: Record<JdHealth, { label: string; desc: string }> = {
-  good: { label: '순항', desc: '충원 완료 / 면접·오퍼 진행 중 / 기업 검토 중(면접·입사 이력이 있거나 수주 6주 미만인 공고)' },
-  stall: { label: '정체', desc: '멈춘 공고 — 수주 6주가 지나도록 기업 반응(면접 전환)이 한 번도 없거나, 기업 단계에 아무도 없이 내부에만 쌓여 있음' },
+//
+// 'done'(충원 완료)는 aggregate 판정이 아니라 화면 파생 상태 — 규칙상 good 에 포함되지만
+// "TO 다 채워 더 볼 것 없는 공고"와 "아직 채우는 중"은 대표가 봐야 할 성격이 달라 따로 세운다.
+// 집계 무변경 = 캐시 키 그대로. (2026-07-28 대표 요청 "충원율 100% 넘으면 완료라고 표시")
+export type JdView = JdHealth | 'done'
+export const jdView = (j: JdRow): JdView | null =>
+  j.health == null ? null : j.headcount != null && j.hiresAll >= j.headcount ? 'done' : j.health
+
+export const HEALTH_META: Record<JdView, { label: string; desc: string }> = {
+  done: { label: '충원 완료', desc: 'TO 자리를 다 채운 공고 (KTC Ops TO_Table 매칭 기준 — 이탈하면 다시 빈자리) — 모집 마감·공고 내리기 대상' },
+  good: { label: '순항', desc: '면접·오퍼 진행 중 / 기업 검토 중(입사 이력이 있거나 모집 6주 미만인 공고)' },
+  stall: { label: '정체', desc: '멈춘 공고 — 모집 6주가 지나도록 기업 반응(면접 전환)이 한 번도 없거나, 기업 단계에 아무도 없이 내부에만 쌓여 있음' },
   low: { label: '지원 부족', desc: 'TO 1명당 지원 30건 미만 — 입사가 성사된 공고들의 실측 하위 수준 (TO당 최소 17 ~ 중앙값 58건)' },
-  early: { label: '모집 초기', desc: '수주 1주 미만 — 아직 판정하지 않음 (유예)' },
+  early: { label: '모집 초기', desc: '모집 시작 1주 미만 — 아직 판정하지 않음 (유예)' },
 }
-const HEALTH_ORDER: JdHealth[] = ['good', 'stall', 'low', 'early']
+export const HEALTH_ORDER: JdView[] = ['done', 'good', 'stall', 'low', 'early']
 
 // 섹션 헤드용 판정 요약 — "뭐가 잘되고 뭐가 안되는지"의 즉답 한 줄
 export function JdHealthSummary({ jds }: { jds: JdRow[] }) {
   return (
     <span className="hsum">
       {HEALTH_ORDER.map(h => {
-        const n = jds.filter(j => j.health === h).length
+        const n = jds.filter(j => jdView(j) === h).length
         return (
           <span key={h} className={n > 0 ? 'hs' : 'hs zero'}>
             <i className={`jdot ${h}`} />

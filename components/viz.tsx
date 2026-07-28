@@ -132,15 +132,22 @@ export function MonthlyBars({ points }: { points: MonthPoint[] }) {
   )
 }
 
-export function Meter({ ratio }: { ratio: number | null }) {
+// done = TO 를 다 채운 공고 — % 대신 "완료"로 못박고, 초과 채용일 때만 실제 %를 흐리게 병기
+export function Meter({ ratio, done = false }: { ratio: number | null; done?: boolean }) {
   if (ratio == null) return <span className="dim">–</span>
   const pct = Math.min(1, Math.max(0, ratio))
   return (
     <span className="meter">
       <span className="track">
-        <span className="fill" style={{ width: `${pct * 100}%` }} />
+        <span className={done ? 'fill done' : 'fill'} style={{ width: `${pct * 100}%` }} />
       </span>
-      <span className="pct">{Math.round(ratio * 100)}%</span>
+      {done ? (
+        <span className="pct done">
+          완료{ratio > 1 && <em>{Math.round(ratio * 100)}%</em>}
+        </span>
+      ) : (
+        <span className="pct">{Math.round(ratio * 100)}%</span>
+      )}
     </span>
   )
 }

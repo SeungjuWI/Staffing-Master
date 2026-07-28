@@ -101,6 +101,8 @@ export async function GET() {
   const OPS = process.env.KTC_OPS_SHEET_ID || '1opr9KoR7KRZ31CJDNGM63xbA2rPZjPuNaG6eeLPTXjM'
 
   let jdTotal = 0, jdOpen = 0, headcountOpen = 0, ivPeople = 0, ivNoCodeRows = 0
+  const openHeadcountFallback: Record<string, number> = {}
+  const toTableByCode: Record<string, { to: number; filled: number }> = {}
   let empTotal = 0, empIng = 0, empAttributed = 0, revSum = 0, profitSum = 0
   let finalPassedNotInEmp = 0
   // 공고별 지원 크로스소스 대조 재료 (2026-07-28 FPT403 맹점 재발 방지 —
@@ -120,10 +122,27 @@ export async function GET() {
   if (sheet) {
     const [mRes, oRes] = await Promise.all([
       sheet.spreadsheets.values.batchGet({ spreadsheetId: MASTER, ranges: ["'JD EXECUTION'!A1:N", "'INTERVIEW'!A1:N"] }),
-      sheet.spreadsheets.values.batchGet({ spreadsheetId: OPS, ranges: ["'Employee'!A1:T", "'매출현황'!A1:N"] }),
+      sheet.spreadsheets.values.batchGet({ spreadsheetId: OPS, ranges: ["'Employee'!A1:T", "'매출현황'!A1:N", "'TO_Table_수정'!A1:R"] }),
     ])
     const [jdRows, ivRows] = mRes.data.valueRanges.map((v: any) => v.values || [])
-    const [empRows, revRows] = oRes.data.valueRanges.map((v: any) => v.values || [])
+    const [empRows, revRows, toRows] = oRes.data.valueRanges.map((v: any) => v.values || [])
+
+    // TO 원장 독립 재집계 (aggregate 와 같은 규칙 — 헤더 이름으로 열 해석)
+    {
+      const hIdx = toRows.findIndex((r: any[]) => (r || []).some((c: any) => /vn\s*code/i.test(String(c || ''))))
+      if (hIdx >= 0) {
+        const H: any[] = toRows[hIdx]
+        const cCode = H.findIndex((h: any) => /vn\s*code/i.test(String(h || '').trim()))
+        const cState = H.findIndex((h: any) => /현재\s*상태/.test(String(h || '').trim()))
+        for (const r of toRows.slice(hIdx + 1)) {
+          const c = String((r || [])[cCode] || '').trim().toUpperCase()
+          if (!c) continue
+          const b = toTableByCode[c] || (toTableByCode[c] = { to: 0, filled: 0 })
+          b.to++
+          if (String(r[cState] || '').trim() === '매칭') b.filled++
+        }
+      }
+    }
 
     // 열 위치는 헤더 이름으로 (aggregate.ts 와 동일 — 컬럼 이동에도 안 깨지게). 못 찾으면 실측 인덱스 폴백.
     const jdHdrIdx = jdRows.findIndex((r: any[]) => r.some((c: any) => /job\s*id/i.test(String(c || ''))))
@@ -144,9 +163,16 @@ export async function GET() {
       if (!CLOSED_RE.test(String(r[JCstatus] || '').trim())) {
         jdOpen++
         jdOpenCodes.add(code)
-        headcountOpen += parseInt(r[JCcount]) || 0
+        // TO 는 KTC Ops TO_Table 이 정본 (아래에서 코드별로 채움) — 원장에 없는 공고만 Headcount 폴백
+        openHeadcountFallback[code.toUpperCase()] = parseInt(r[JCcount]) || 0
       }
     }
+    // 오픈 공고 TO 합 = 코드별로 TO_Table 우선, 미등재면 JD Headcount
+    headcountOpen = Object.entries(openHeadcountFallback).reduce(
+      (s, [c, hc]) => s + (toTableByCode[c] ? toTableByCode[c].to : hc),
+      0
+    )
+
     const seen = new Set<string>()
     for (const r of ivRows.slice(2)) {
       const name = String(r[1] || '').trim()
@@ -350,7 +376,14 @@ export async function GET() {
     { name: '지원자 = 채널 표 합계', dashboard: f.people, source: chanSumPeople, note: '내부 일관성' },
     { name: '스크리닝 합격 도달', dashboard: f.screened, source: screenReached, note: 'status exact count 합' },
     { name: '기업 전달 도달', dashboard: f.delivered, source: deliveredReached, note: '' },
-    { name: '면접 (사람 단위)', dashboard: f.interview, source: ivPeople, note: 'INTERVIEW 탭 재집계' },
+    // 면접 = 기업 면접(파이프라인 interviewing 이상). 폐지된 자체 폰 인터뷰 시트(INTERVIEW 탭)는
+    // 이제 집계에서 빠졌고, 참고용으로 details 에만 남긴다 (2026-07-28 기준 변경)
+    {
+      name: '면접 도달 (기업 면접)',
+      dashboard: f.interview,
+      source: (st.interviewing || 0) + (st.offer || 0) + (st.final_passed || 0),
+      note: 'status exact count 합',
+    },
     { name: '오퍼·계약 도달', dashboard: f.offer, source: (st.offer || 0) + (st.final_passed || 0), note: '' },
     { name: '입사 (final_passed)', dashboard: f.hired, source: st.final_passed || 0, note: '' },
     { name: '입사 = 채널 표 입사 합', dashboard: f.hired, source: chanSumHires, note: '내부 일관성' },
@@ -375,7 +408,13 @@ export async function GET() {
     { name: 'FYI 지원 공고미귀속 (모집 중 공고)', dashboard: fyiUnattrActive, source: 0, note: '모집 중인 FYI 공고인데 원장 제목과 매칭 실패 — 공고별 표시 누락 위험 (상세 details)' },
     { name: '공고 수 (전체)', dashboard: d.matching.jds.length, source: jdTotal, note: 'JD EXECUTION 재집계' },
     { name: '오픈 공고', dashboard: d.matching.openJds, source: jdOpen, note: '' },
-    { name: '오픈 공고 TO 합', dashboard: d.matching.headcountTotal, source: headcountOpen, note: '' },
+    { name: '오픈 공고 TO 합', dashboard: d.matching.headcountTotal, source: headcountOpen, note: 'TO_Table 우선, 미등재만 Headcount' },
+    {
+      name: '오픈 공고 충원 합',
+      dashboard: d.matching.hiresInOpen,
+      source: Object.keys(openHeadcountFallback).reduce((s, c) => s + (toTableByCode[c]?.filled || 0), 0),
+      note: "TO_Table '매칭' 자리 수",
+    },
     { name: '재직 중 (귀속)', dashboard: d.headline.working, source: empIng, note: 'Employee Ing ∩ 파이프라인' },
     { name: '입사자 시트 귀속 인원', dashboard: d.headline.working + d.headline.left, source: empAttributed, note: `Employee 전체 ${empTotal}명 중 귀속` },
     { name: '파이프라인 외 입사 (제외분)', dashboard: d.outcome.excludedHires, source: empTotal - empAttributed, note: '' },
@@ -426,7 +465,9 @@ export async function GET() {
       FYI_공고별_귀속_상위: Object.entries(fyiAppsByCode).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([c, n]) => ({ 공고: c, FYI지원: n })),
       FYI_공고미귀속_지원: fyiUnattrList,
       시트_코드미귀속_지원건: sheetAppsNoCode,
-      면접_공고코드_없는_행: ivNoCodeRows,
+      // 폐지된 자체 폰 인터뷰 시트 — 집계에는 안 쓰고 규모만 참고로 남긴다 (기업 면접은 파이프라인 기준)
+      구_자체인터뷰시트_인원: ivPeople,
+      구_자체인터뷰시트_공고코드_없는_행: ivNoCodeRows,
     },
     checks,
   })

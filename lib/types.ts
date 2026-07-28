@@ -16,10 +16,10 @@ export type Channel = {
 }
 
 // 공고 판정 — 진행 중 공고만 (마감은 null). 2026-07-28 전수조사로 개정:
-//  good  순항: 충원 완료 / 면접·오퍼 진행 중 / 기업 검토 중인데 반응 이력(면접·입사)이 있거나 수주 6주 미만
-//  early 모집 초기: 수주 7일 미만 (판정 유예)
+//  good  순항: 충원 완료 / 면접·오퍼 진행 중 / 기업 검토 중인데 반응 이력(면접·입사)이 있거나 모집 6주 미만
+//  early 모집 초기: 모집 시작 7일 미만 (판정 유예)
 //  low   지원 부족: TO 1명당 지원 30건 미만 (입사가 나온 공고들의 하위 사분위 기준)
-//  stall 정체: 기업 응답 없음(검토 체류만 있고 수주 6주+ 면접 전환 0) 또는 내부 처리 정체(기업 단계 0)
+//  stall 정체: 기업 응답 없음(검토 체류만 있고 모집 6주+ 면접 전환 0) 또는 내부 처리 정체(기업 단계 0)
 //  (구 규칙은 "검토 체류 1명만 있어도 순항"이라 무반응 공고 12건이 순항으로 위장됐었음)
 export type JdHealth = 'good' | 'early' | 'low' | 'stall'
 
@@ -27,7 +27,7 @@ export type JdRow = {
   code: string           // 공고코드 (FPT401 등)
   company: string
   title: string
-  headcount: number | null // 채용 목표 인원 (TO)
+  headcount: number | null // 채용 목표 인원 (TO) — KTC Ops TO_Table 행 수, 없으면 JD EXECUTION Headcount
   status: string         // JD EXECUTION 시트 status 원문
   open: boolean          // 진행 중 여부
   apps: number           // 지원 건 (시트 탭 + FYI 라이브 — FYI 는 공고 제목 유니크 매칭으로 귀속)
@@ -38,9 +38,11 @@ export type JdRow = {
   interviews: number     // 면접 (INTERVIEW 탭)
   offer: number          // 오퍼 도달
   hires: number          // 입사 (기간 코호트 — 퍼널·표와 정합)
-  hiresAll: number       // 입사 누적 (스톡) — 충원율·판정 재료 (기간 보기에서도 충원은 누적이 자연스러움)
-  startDate: string | null // 수주일 (시트 Date Received, 없으면 최초 지원일) YYYY-MM-DD
-  days: number | null    // 수주 후 경과 일수
+  hiresAll: number       // 충원 (스톡) — KTC Ops TO_Table 의 '매칭' 자리 수. 이탈하면 다시 빈자리로 돌아간다
+  dropped: number        // 이탈한 자리 수 (TO_Table '이탈') — 채웠다가 나갔거나 매칭 전 드롭
+  responded: boolean     // 기업 반응 이력 — TO_Table 에 기업 면접 완료·매칭 기록이 있는 공고 (판정 재료)
+  startDate: string | null // 모집 시작일 (시트 Date Received, 없으면 최초 지원일) YYYY-MM-DD
+  days: number | null    // 모집 시작 후 경과 일수
   peopleAll: number      // 누적 지원자 (스톡 — 기간 필터 무관)
   appsAll: number        // 누적 지원 건 (스톡) — 지원 부족 판정 재료 (화면 '지원' 열과 같은 시트 기준)
   channels: { key: string; apps: number }[] // 채널별 지원 건 (기간 코호트, apps 와 정합) — 행 클릭 상세의 도넛 재료
@@ -123,7 +125,7 @@ export type MasterData = {
     headcountTotal: number      // 오픈 공고 TO 합
     hiresInOpen: number         // 오픈 공고에서 이미 채운 인원 (스톡 — 기간 보기에서도 누적)
     fillRateOpen: number | null // 오픈 공고 충원율 (스톡)
-    jdSince: string | null      // 가장 이른 수주일 — "언제부터 모은 숫자인지" 표기용
+    jdSince: string | null      // 가장 이른 모집 시작일 — "언제부터 모은 숫자인지" 표기용
   }
 
   vietnam: VietnamBlock

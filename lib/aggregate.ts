@@ -10,7 +10,7 @@
 //  - salarymap Supabase `ktc_applications`  → 지원 건 (시트 원본 재적재본)
 //  - salarymap Supabase `jobs`/`job_applications` → FYI(KTC 공고) 지원자 + 베트남 매칭
 //  - salarymap Supabase `user_profiles`     → FYI 인재풀 (이력서 등록/공개)
-//  - Master 시트 `JD EXECUTION`/`INTERVIEW` → 공고 원장·면접
+//  - Master 시트 `JD EXECUTION` → 공고 원장 (INTERVIEW 탭은 폐지된 자체 인터뷰 기록이라 미사용)
 //  - KTC Ops 시트 `Employee`/`매출현황`      → 입사·재직·매출·이익
 //  - 비용 시트 (통합 비교표/invoice/캠페인별/LINKEDIN) → 채널별 지출 (KRW)
 //
@@ -60,7 +60,7 @@ function extractJobCode(appliedJob: unknown) {
   return m ? m[1] : null
 }
 
-// JD 시트 Date Received(수주일) — dd/mm/yyyy 와 m/d/yyyy 가 섞여 있어(실측: "22/04/2026" 과
+// JD 시트 Date Received(모집 시작일) — dd/mm/yyyy 와 m/d/yyyy 가 섞여 있어(실측: "22/04/2026" 과
 // "7/13/2026" 공존) 양쪽 해석을 만들고, 미래 날짜를 버린 뒤 최초 지원일에 가까운 쪽을 고른다.
 // 그래도 동률이면 월/일 해석 (최근 행들의 관행).
 function parseReceived(raw: unknown, firstAppIso: string | null, nowMs: number): string | null {
@@ -90,9 +90,9 @@ function parseReceived(raw: unknown, firstAppIso: string | null, nowMs: number):
 // 최소 17 ~ 중앙값 58이고 하위 사분위가 ~33건 (2026-07-28 재실측). 이보다 낮으면 지원 부족.
 // (판정 재료는 화면 '지원' 열과 같은 시트 기준 지원 건 — 지원자 수 기준이던 것을 07-28 통일)
 const APPS_PER_TO_FLOOR = 30
-const EARLY_DAYS = 7 // 수주 1주 미만은 판정 유예 (모집 초기) — 2주는 길다는 대표 피드백으로 07-28 단축
-// 기업 검토 체류만 있고 면접·입사 이력이 전무한 공고의 "무반응 정체" 경계 — 전수조사에서
-// 무반응 공고의 수주 주차가 2~4주와 8~12주로 갈라져(중간 공백) 6주를 경계로 삼음 (2026-07-28)
+const EARLY_DAYS = 7 // 모집 시작 1주 미만은 판정 유예 (모집 초기) — 2주는 길다는 대표 피드백으로 07-28 단축
+// 기업 검토 체류만 있고 입사 이력이 전무한 공고의 "무반응 정체" 경계 — 전수조사에서
+// 무반응 공고의 모집 주차가 2~4주와 8~12주로 갈라져(중간 공백) 6주를 경계로 삼음 (2026-07-28)
 const NO_RESPONSE_DAYS = 42
 
 // VN(UTC+7) 기준 YYYY-MM
@@ -223,9 +223,9 @@ type Raw = {
   resumeCount: number
   publicCount: number
   jdSheet: any[][]
-  ivSheet: any[][]
   empSheet: any[][]
   revSheet: any[][]
+  toSheet: any[][]
   fyiApps: any[]
   fyiJobById: Record<string, { title: string; company: string; sourceId: string }> // FYI 공고 id → 제목·회사·공고코드(source_id)
   vnJobs: any[]
@@ -300,8 +300,11 @@ async function fetchRaw(): Promise<Raw> {
     if (error) throw new Error(error.message)
     return count || 0
   }, 0)
-  const pMaster = grab('Master 시트(공고·면접)', () => batchGet(MASTER_SHEET_ID, ["'JD EXECUTION'!A1:N", "'INTERVIEW'!A1:N"]), [[], []])
-  const pOps = grab('KTC Ops 시트(입사·매출)', () => batchGet(KTC_OPS_SHEET_ID, ["'Employee'!A1:T", "'매출현황'!A1:N"]), [[], []])
+  // INTERVIEW 탭은 더 이상 읽지 않는다 — 폐지된 자체 폰 인터뷰 기록이라 면접 집계에서 제외 (2026-07-28)
+  const pMaster = grab('Master 시트(공고)', () => batchGet(MASTER_SHEET_ID, ["'JD EXECUTION'!A1:N"]), [[]])
+  // TO_Table_수정 = TO 단위 원장 (TO 1개당 1행, 현재 상태 매칭/진행중/이탈). 운영이 관리하는 정본이라
+  // TO·충원은 이걸 따른다 — JD EXECUTION 의 Headcount 열은 갱신이 밀려 11건이 어긋나 있었다 (2026-07-28)
+  const pOps = grab('KTC Ops 시트(입사·매출·TO)', () => batchGet(KTC_OPS_SHEET_ID, ["'Employee'!A1:T", "'매출현황'!A1:N", "'TO_Table_수정'!A1:R"]), [[], [], []])
 
   // FYI(KTC 공고) 지원자 — salarymap 라이브. 공고 제목도 함께 가져와 공고별 귀속에 쓴다
   // (FYI 직접 지원은 시트 탭에 없어서, 제목 매칭 없이는 공고별 '지원'에서 통째로 빠진다 —
@@ -464,8 +467,8 @@ async function fetchRaw(): Promise<Raw> {
   // 위에서 띄운 promise 를 전부 한 번에 대기 (콜드 fetch = 가장 느린 1개 시간)
   const [candidates, applications, resumeCount, publicCount, master, ops, fyiWrap, vn, cost] =
     await Promise.all([pCandidates, pApplications, pResume, pPublic, pMaster, pOps, pFyiApps, pVn, pCost])
-  const [jdSheet, ivSheet] = master
-  const [empSheet, revSheet] = ops
+  const [jdSheet] = master
+  const [empSheet, revSheet, toSheet] = ops
   const { fyiApps, fyiJobById } = fyiWrap
   const { vnJobs, vnApps } = vn
 
@@ -484,7 +487,7 @@ async function fetchRaw(): Promise<Raw> {
     }
   }
 
-  return { warnings, candidates, applications, resumeCount, publicCount, jdSheet, ivSheet, empSheet, revSheet, fyiApps, fyiJobById, vnJobs, vnApps, cost, fetchedAt: Date.now() }
+  return { warnings, candidates, applications, resumeCount, publicCount, jdSheet, empSheet, revSheet, toSheet, fyiApps, fyiJobById, vnJobs, vnApps, cost, fetchedAt: Date.now() }
 }
 
 type ChanAcc = {
@@ -495,7 +498,7 @@ type ChanAcc = {
 
 // ── 기간별 집계 (캐시된 원본에서 동기 계산 — 시트 재요청 없음) ──
 function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData {
-  const { candidates, applications, fyiApps, jdSheet, ivSheet, empSheet, revSheet } = raw
+  const { candidates, applications, fyiApps, jdSheet, empSheet, revSheet, toSheet } = raw
 
   // 기간 필터 — "지원일 코호트": 해당 기간에 지원한 인재의 현재 도달 단계.
   // 스톡 지표(입사 누적·재직·매출·인재풀·오픈 공고)와 비용(시간 축 없음)은 항상 누적.
@@ -578,8 +581,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // 공고 판정용 누적치도 여기서 — 기간 보기에서도 판정은 스톡(현재 상태·누적 지원자) 기준.
   const chanByEmailAll: Record<string, string> = {}
   const statusCount: Record<string, number> = {}
-  const perJdAll: Record<string, { people: number; apps: number; iv: number; cur: Record<string, number>; firstApp: string | null; lastApp: string | null }> = {}
-  const jdAll = (code: string) => perJdAll[code] || (perJdAll[code] = { people: 0, apps: 0, iv: 0, cur: {}, firstApp: null, lastApp: null })
+  const perJdAll: Record<string, { people: number; apps: number; cur: Record<string, number>; firstApp: string | null; lastApp: string | null }> = {}
+  const jdAll = (code: string) => perJdAll[code] || (perJdAll[code] = { people: 0, apps: 0, cur: {}, firstApp: null, lastApp: null })
   // 최근 지원일 판정용 상한 — 날짜 파싱 오류로 생긴 미래 값 배제 (+1일 여유)
   const lastAppCap = new Date(fetchedAt + 86400000).toISOString()
   let finalPassedAll = 0
@@ -625,7 +628,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     bump(ch, 'people')
     if (SCREEN_PASS.has(st)) { bump(ch, 'docPass'); screenPass++ }
     if (DELIVERED.has(st)) delivered++
-    if (INTERVIEW_REACHED.has(st)) interviewPipe++
+    if (INTERVIEW_REACHED.has(st)) { interviewPipe++; bump(ch, 'interviews') }
     if (OFFER_REACHED.has(st)) offerReached++
     if (st === 'final_passed') { finalPassed++; bump(ch, 'hires') }
     if (code) {
@@ -633,6 +636,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       j.people++
       if (SCREEN_PASS.has(st)) j.docPass++
       if (DELIVERED.has(st)) j.delivered++
+      if (INTERVIEW_REACHED.has(st)) j.interviews++
       if (OFFER_REACHED.has(st)) j.offer++
       if (st === 'final_passed') j.hires++
     }
@@ -731,43 +735,11 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     }
   }
 
-  // ── 면접 (Master INTERVIEW 탭 — 사람 단위 1회, 공고코드 추출) ──
-  let interviewPeople = 0
-  {
-    const seenPerson = new Set<string>()
-    const seenPersonCode = new Set<string>()
-    const seenPersonCodeAll = new Set<string>()
-    for (const r of ivSheet.slice(2)) {
-      const email = String(r[2] || '').trim().toLowerCase()
-      const name = String(r[1] || '').trim()
-      if (!name) continue
-      const personKey = email || name
-      const codes = [...new Set(String(r[13] || '').match(CODE_RE) || [])]
-      // 스톡 면접 (판정용 — 기간 필터 무관): 공고에 "기업 반응 이력"이 있는지의 근거
-      for (const code of codes) {
-        const key = `${personKey}|${code}`
-        if (!seenPersonCodeAll.has(key)) {
-          seenPersonCodeAll.add(key)
-          jdAll(code).iv++
-        }
-      }
-      // 기간 보기: 코호트(해당 기간 지원자)에 속한 사람만 집계
-      if (start != null && !cohortEmails.has(email)) continue
-      if (!seenPerson.has(personKey)) {
-        seenPerson.add(personKey)
-        interviewPeople++
-        const ch = channelForEmailAll(email)
-        if (ch) bump(ch, 'interviews') // 파이프라인 미귀속 인원은 채널 표에서 제외
-      }
-      for (const code of codes) {
-        const key = `${personKey}|${code}`
-        if (seenPersonCode.has(key)) continue
-        seenPersonCode.add(key)
-        jd(code).interviews++
-      }
-    }
-  }
-
+  // ── 면접 = 기업 면접 (파이프라인 interviewing 이상) ────────────
+  // 2026-07-28 교체: 이전에는 Master 시트 INTERVIEW 탭 행 수를 면접으로 셌으나, 그 탭은
+  // "스크리닝 합격자 대상 자체 폰 인터뷰"(→ AI 인터뷰 → 둘 다 폐지) 시절의 기록이라
+  // 기업 면접이 아니다. 실제로 전달(38)보다 면접(85)이 많은 역전이 공고 단위에서 발생했다.
+  // 한계: 파이프라인에 상태 이력이 없어 면접 후 탈락자는 rejected 로 묻힌다 (화면에 각주).
   // ── 입사·재직·매출 (Ops Employee + 매출현황) ────────────────
   type Hire = {
     company: string; email: string; name: string; status: string
@@ -849,6 +821,41 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       return b.people - a.people
     })
 
+  // ── TO 원장 (KTC Ops `TO_Table_수정`) — TO 1행 = 채용 자리 1개 ────
+  // 대표 확인(2026-07-28): TO·채용 현황의 정본은 이 탭이다. JD EXECUTION 의 Headcount 는
+  // 갱신이 밀려 11건 어긋나 있었고, 파이프라인 final_passed 는 이탈해도 그대로 남아
+  // 이탈자(LM1001·NX501 등)를 계속 입사로 세고 있었다.
+  // 열은 헤더 이름으로 해석 (이 시트들은 컬럼이 자주 이동한다 — 인덱스 하드코딩 금지)
+  const toByCode: Record<string, { to: number; filled: number; dropped: number; ongoing: number; responded: boolean }> = {}
+  {
+    const hIdx = toSheet.findIndex((r: any[]) => (r || []).some((c: any) => /vn\s*code/i.test(String(c || ''))))
+    if (hIdx >= 0) {
+      const H: any[] = toSheet[hIdx]
+      const col = (re: RegExp, fallback: number) => {
+        const i = H.findIndex((h: any) => re.test(String(h || '').trim()))
+        return i >= 0 ? i : fallback
+      }
+      const cCode = col(/vn\s*code/i, 2)
+      const cState = col(/현재\s*상태/, 5)
+      const cIv = col(/인터뷰\s*완료/, 10)
+      const cMatch = col(/^매칭$/, 11)
+      for (const r of toSheet.slice(hIdx + 1)) {
+        const code = String((r || [])[cCode] || '').trim().toUpperCase()
+        if (!code) continue
+        const b = toByCode[code] || (toByCode[code] = { to: 0, filled: 0, dropped: 0, ongoing: 0, responded: false })
+        const state = String(r[cState] || '').trim()
+        b.to++
+        if (state === '매칭') b.filled++
+        else if (state === '이탈') b.dropped++
+        else if (state === '진행중') b.ongoing++
+        // 기업 반응 이력 = 기업 면접까지 갔거나 매칭된 적 있는 자리 (이탈로 끝났어도 반응은 있었던 것)
+        if (String(r[cIv] || '').trim() || String(r[cMatch] || '').trim()) b.responded = true
+      }
+    } else if (toSheet.length) {
+      raw.warnings.push('KTC Ops TO_Table_수정 헤더(VN Code)를 찾지 못해 TO 는 JD 원장 Headcount 로 폴백')
+    }
+  }
+
   // ── 공고 원장 → JdRow (헤더 해석은 위 공고 귀속 리졸버 직전에서 완료) ──
   const jds: JdRow[] = jdDataRows
     .filter((r: any[]) => String(r[JC.code] || '').trim())
@@ -857,10 +864,13 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       const agg = perJd[code] || { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0, chan: {} as Record<string, number> }
       const status = String(r[JC.status] || '').trim()
       const open = !CLOSED_RE.test(status)
-      const headcount = parseInt(r[JC.headcount]) || null
+      // TO·충원은 TO 원장 우선, 원장에 없는 공고만 JD EXECUTION Headcount 폴백
+      const toRow = toByCode[code.toUpperCase()]
+      const headcount = toRow ? toRow.to : parseInt(r[JC.headcount]) || null
+      const dropped = toRow ? toRow.dropped : 0
 
       // 판정 재료는 누적/현재 상태 기준 (기간 보기여도 판정은 안 바뀐다)
-      const all = perJdAll[code] || { people: 0, apps: 0, iv: 0, cur: {}, firstApp: null }
+      const all = perJdAll[code] || { people: 0, apps: 0, cur: {}, firstApp: null }
       const cur = all.cur
       const curCompany = cur.sent_to_company || 0
       const curInterview = cur.interviewing || 0
@@ -869,19 +879,22 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       const curPassed = cur.passed || 0
       const curReady = cur.ready_to_forward || 0
       const curInternal = curNew + curPassed + curReady
-      const hiresAll = cur.final_passed || 0
+      // 충원 = TO 원장의 '매칭' 자리 수 (이탈은 빈자리로 되돌아간다).
+      // 파이프라인 final_passed 는 이탈 후에도 그대로 남아 실제 충원보다 부풀려져 있었다.
+      const hiresAll = toRow ? toRow.filled : cur.final_passed || 0
       const startDate = parseReceived(r[JC.received], all.firstApp, fetchedAt) || (all.firstApp ? all.firstApp.slice(0, 10) : null)
       const days = startDate ? Math.max(0, Math.round((fetchedAt - new Date(`${startDate}T00:00:00+07:00`).getTime()) / 86400000)) : null
 
       // 2026-07-28 개정 (전수조사 근거): 구 규칙은 "검토 체류 1명만 있어도 순항"이라
       // 면접·입사가 한 번도 없는 무반응 공고 12건이 순항으로 위장됐다 (정체 0건 착시).
-      // 검토 중은 ① 반응 이력(면접·입사) 있으면 순항 ② 없어도 수주 6주 미만이면 순항(첫 반응 대기)
+      // 검토 중은 ① 반응 이력(면접·입사) 있으면 순항 ② 없어도 모집 6주 미만이면 순항(첫 반응 대기)
       // ③ 6주 넘도록 반응 0이면 정체(기업 응답 없음)로 본다.
       let health: JdRow['health'] = null
       if (open) {
         if (headcount != null && hiresAll >= headcount) health = 'good' // 충원 완료
         else if (curOffer + curInterview > 0) health = 'good' // 면접·오퍼 진행 중
-        else if (curCompany > 0 && (all.iv > 0 || hiresAll > 0)) health = 'good' // 검토 중 + 기업 반응 이력
+        // 반응 이력 = TO 원장에 기업 면접 완료·매칭 기록이 있는 공고 (이탈로 끝났어도 기업은 반응했다)
+        else if (curCompany > 0 && (toRow?.responded || hiresAll > 0)) health = 'good'
         else if (curCompany > 0 && days != null && days < NO_RESPONSE_DAYS) health = 'good' // 검토 중 (첫 반응 대기)
         else if (days != null && days < EARLY_DAYS) health = 'early'
         else if (all.apps < APPS_PER_TO_FLOOR * (headcount || 1)) health = 'low'
@@ -899,6 +912,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         delivered: agg.delivered, interviews: agg.interviews, offer: agg.offer, hires: agg.hires, hiresAll,
         channels: Object.entries(agg.chan).map(([k, n]) => ({ key: k, apps: n })).sort((a, b) => b.apps - a.apps),
         lastAppDate: all.lastApp ? String(all.lastApp).slice(0, 10) : null,
+        dropped, responded: !!toRow?.responded,
         startDate, days, peopleAll: all.people, appsAll: all.apps,
         curInternal, curNew, curPassed, curReady, curCompany, curInterview, curOffer, health,
       }
@@ -947,7 +961,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     { key: 'people', label: '지원자', count: candidatesTotal },
     { key: 'screened', label: '스크리닝 합격', count: screenPass },
     { key: 'delivered', label: '기업 전달', count: delivered },
-    { key: 'interview', label: '면접', count: Math.max(interviewPeople, interviewPipe), note: 'Master INTERVIEW 탭 기준' },
+    { key: 'interview', label: '면접', count: interviewPipe, note: '기업 면접 — 면접 후 탈락자는 상태 이력이 없어 미포함' },
     { key: 'offer', label: '오퍼·계약', count: Math.max(offerReached, finalPassed) },
     { key: 'hired', label: '입사', count: finalPassed },
   ]
@@ -1026,7 +1040,7 @@ const getCachedByPeriod = unstable_cache(
       '30d': computeFromRaw(raw, '30d', at),
     }
   },
-  ['staffing-master-data-v12'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v14'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

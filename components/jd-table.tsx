@@ -1,6 +1,6 @@
 'use client'
 
-// 공고 표 — 컬럼 헤더 클릭 정렬 (팀 요청 2026-07-27: "수주일 최근이 위로, 오름/내림 토글").
+// 공고 표 — 컬럼 헤더 클릭 정렬 (팀 요청 2026-07-27: "모집 시작일 최근이 위로, 오름/내림 토글").
 // 클릭 1회 = 내림차순(최근·큰 값 위) → 2회 = 오름차순 → 3회 = 기본(판정 우선) 정렬 복귀.
 // 기본 정렬은 aggregate 의 판정 순(순항→정체→부족→초기)을 그대로 쓴다 — 정렬 상태가 없으면 받은 순서.
 //
@@ -11,7 +11,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { JdRow } from '@/lib/types'
 import { channelLabel, fmtDay, fmtInt } from '@/lib/fmt'
 import { EmptyState, Meter } from './viz'
-import { HEALTH_META } from './tables'
+import { HEALTH_META, HEALTH_ORDER, jdView } from './tables'
 
 const SEL_KEY = 'sm-jd-sel-v1'
 const SEL_ONLY_KEY = 'sm-jd-sel-only-v1'
@@ -81,15 +81,25 @@ function Donut({ parts, total }: { parts: DonutPart[]; total: number }) {
   )
 }
 
+// 충원 완료 사유 — TO 대비 몇 명 채웠는지 (초과 채용이면 초과분도 말해준다)
+function doneReason(j: JdRow): string {
+  const to = j.headcount ?? 0
+  const over = j.hiresAll - to
+  return `TO ${fmtInt(to)}자리 중 ${fmtInt(j.hiresAll)}자리 채움${over > 0 ? ` (초과 ${fmtInt(over)})` : ''}${
+    j.dropped > 0 ? ` · 이탈 ${fmtInt(j.dropped)}` : ''
+  }`
+}
+
 // 순항 사유 한 줄 (문제 공고 사유는 healthNote 재사용)
 function goodReason(j: JdRow): string {
-  if (j.headcount != null && j.hiresAll >= j.headcount) return '충원 완료'
   if (j.curInterview + j.curOffer > 0) return '면접·오퍼 진행 중'
-  if (j.interviews > 0 || j.hiresAll > 0) return '기업 검토 중 — 면접·입사 이력 있는 기업'
-  return '기업 검토 중 — 첫 반응 대기 (수주 6주 미만)'
+  if (j.hiresAll > 0) return '기업 검토 중 — 이미 채운 자리 있음'
+  if (j.responded) return '기업 검토 중 — 기업 면접·매칭 이력 있음'
+  return '기업 검토 중 — 첫 반응 대기 (모집 6주 미만)'
 }
 
 function JdDetail({ j, open, colSpan }: { j: JdRow; open: boolean; colSpan: number }) {
+  const view = jdView(j)
   const parts = siteBreakdown(j.channels)
   const total = parts.reduce((s, p) => s + p.apps, 0)
   const lastDays =
@@ -118,20 +128,32 @@ function JdDetail({ j, open, colSpan }: { j: JdRow; open: boolean; colSpan: numb
             </div>
           )}
           <dl className="jdx-facts">
-            <dt>수주일</dt>
-            <dd>{j.startDate ? <>{fmtDay(j.startDate)}{j.days != null && <> · <b>{fmtInt(Math.max(1, Math.ceil(j.days / 7)))}주차</b></>}</> : '– (원장 미기입)'}</dd>
+            <dt>모집 시작일</dt>
+            <dd>{j.startDate ? <>{fmtDay(j.startDate)}{j.days != null && <> · <b>D+{fmtInt(j.days)}</b></>}</> : '– (원장 미기입)'}</dd>
             <dt>최근 지원</dt>
             <dd>{lastDays == null ? '–' : lastDays === 0 ? <b>오늘</b> : <><b>{fmtInt(lastDays)}일 전</b> ({fmtDay(j.lastAppDate!)})</>}</dd>
             <dt>지금 단계</dt>
             <dd>{stages.length ? stages.map(([l, n]) => `${l} ${fmtInt(n as number)}`).join(' · ') : '진행 중 인원 없음'}</dd>
             <dt>누적 진행</dt>
-            <dd>합격 <b>{fmtInt(j.docPass)}</b> · 전달 <b>{fmtInt(j.delivered)}</b> · 면접 <b>{fmtInt(j.interviews)}</b> · 입사 <b>{fmtInt(j.hires)}</b></dd>
+            <dd>합격 <b>{fmtInt(j.docPass)}</b> · 전달 <b>{fmtInt(j.delivered)}</b> · 면접 <b>{fmtInt(j.interviews)}</b> · 입사 <b>{fmtInt(j.hiresAll)}</b></dd>
             <dt>충원</dt>
-            <dd>{j.headcount != null ? <>TO {fmtInt(j.headcount)}명 중 <b>{fmtInt(j.hiresAll)}명</b> 채움</> : 'TO 미기재'}</dd>
+            <dd>
+              {j.headcount != null ? (
+                <>
+                  TO {fmtInt(j.headcount)}자리 중 <b>{fmtInt(j.hiresAll)}자리</b> 채움
+                  {j.dropped > 0 && <span className="dim"> · 이탈 {fmtInt(j.dropped)}자리</span>}
+                </>
+              ) : (
+                'TO 미기재'
+              )}
+            </dd>
             <dt>판정</dt>
             <dd>
-              {open && j.health ? (
-                <><i className={`jdot ${j.health}`} /> <b>{HEALTH_META[j.health].label}</b> — {j.health === 'good' ? goodReason(j) : healthNote(j)}</>
+              {open && view ? (
+                <>
+                  <i className={`jdot ${view}`} /> <b>{HEALTH_META[view].label}</b> —{' '}
+                  {view === 'done' ? doneReason(j) : view === 'good' ? goodReason(j) : healthNote(j)}
+                </>
               ) : (
                 <>마감{j.status ? ` (${j.status})` : ''}</>
               )}
@@ -147,23 +169,22 @@ function JdDetail({ j, open, colSpan }: { j: JdRow; open: boolean; colSpan: numb
 // 정체는 병목 위치를 함께 말한다: 기업 응답 없음(검토 체류만) vs 내부 처리(기업 단계 0)
 function healthNote(j: JdRow): string {
   if (j.health === 'stall') {
-    const weeks = j.days != null ? Math.max(1, Math.ceil(j.days / 7)) : null
     return j.curCompany > 0
-      ? `기업 응답 없음 — 검토 체류 ${fmtInt(j.curCompany)}명, 수주 ${weeks != null ? `${fmtInt(weeks)}주차` : '이후'}인데 면접 전환 0`
+      ? `기업 응답 없음 — 검토 체류 ${fmtInt(j.curCompany)}명, 모집 ${j.days != null ? `D+${fmtInt(j.days)}` : '6주 이후'}인데 면접 전환 0`
       : `내부 처리 정체 — 합격 후 대기 ${fmtInt(j.curPassed)}명 · 발송 대기 ${fmtInt(j.curReady)}명, 기업 단계 0명`
   }
   if (j.health === 'low')
     return j.appsAll === 0
       ? '지원 0건 (기준: TO당 30건)'
       : `TO당 지원 ${fmtInt(Math.round(j.appsAll / (j.headcount || 1)))}건뿐 (기준: TO당 30건)`
-  if (j.health === 'early') return `수주 ${fmtInt(j.days ?? 0)}일째 — 1주까지 판정 유예`
+  if (j.health === 'early') return `모집 D+${fmtInt(j.days ?? 0)} — 1주(D+7)까지 판정 유예`
   return ''
 }
 
 type SortKey = 'company' | 'received' | 'to' | 'apps' | 'docPass' | 'delivered' | 'interviews' | 'hires' | 'fill'
 type Sort = { key: SortKey; dir: 1 | -1 } | null
 
-// 정렬 값 추출 — 문자열(회사명·수주일)은 그대로, 숫자는 number. null 은 항상 맨 아래로.
+// 정렬 값 추출 — 문자열(회사명·모집 시작일)은 그대로, 숫자는 number. null 은 항상 맨 아래로.
 const sortVal = (j: JdRow, key: SortKey): string | number | null => {
   switch (key) {
     case 'company': return j.company || null
@@ -173,7 +194,7 @@ const sortVal = (j: JdRow, key: SortKey): string | number | null => {
     case 'docPass': return j.docPass
     case 'delivered': return j.delivered
     case 'interviews': return j.interviews
-    case 'hires': return j.hires
+    case 'hires': return j.hiresAll
     case 'fill': return j.headcount ? j.hiresAll / j.headcount : null
   }
 }
@@ -237,7 +258,13 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
   }
 
   const rows = useMemo(() => {
-    if (!sort) return jds
+    // 기본 정렬 = aggregate 순서 위에 '충원 완료'만 앞으로 (완료는 화면 파생 상태라 aggregate 가 모른다).
+    // 그룹 안 순서는 받은 그대로 — stable sort 이므로 진행 깊은 순·지원자 순이 유지된다.
+    if (!sort) {
+      if (!open) return jds
+      const rank = (j: JdRow) => HEALTH_ORDER.indexOf(jdView(j) ?? 'early')
+      return [...jds].sort((a, b) => rank(a) - rank(b))
+    }
     const { key, dir } = sort
     return [...jds].sort((a, b) => {
       const va = sortVal(a, key)
@@ -248,7 +275,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
       if (typeof va === 'string' || typeof vb === 'string') return String(va).localeCompare(String(vb), 'ko') * dir
       return (va - (vb as number)) * dir
     })
-  }, [jds, sort])
+  }, [jds, sort, open])
   const filtering = open && only && selected.size > 0
   const shown = filtering ? rows.filter(j => selected.has(j.code)) : rows
 
@@ -283,7 +310,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
               <tr>
                 {open && <th className="selcell" aria-label="공고 선택" />}
                 <SortTh label="공고" k="company" sort={sort} onSort={onSort} />
-                <SortTh label="수주" k="received" sort={sort} onSort={onSort} />
+                <SortTh label="모집 시작" k="received" sort={sort} onSort={onSort} />
                 {!open && <th>상태</th>}
                 <SortTh label="TO" k="to" sort={sort} onSort={onSort} />
                 <SortTh label="지원" k="apps" sort={sort} onSort={onSort} />
@@ -297,9 +324,9 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
             <tbody>
               {shown.map(j => {
                 const full = `${j.company} ${j.code}${j.title ? ` · ${j.title}` : ''}`
-                // 순항은 툴팁 없음 (숫자 열이 이미 설명) — 문제/유예 공고만 호버로 판정 이유 노출
-                const note = open && j.health && j.health !== 'good' ? healthNote(j) : null
-                const weeks = j.days != null ? Math.max(1, Math.ceil(j.days / 7)) : null
+                const view = jdView(j)
+                // 완료·순항은 툴팁 없음 (숫자 열이 이미 설명) — 문제/유예 공고만 호버로 판정 이유 노출
+                const note = open && view && view !== 'good' && view !== 'done' ? healthNote(j) : null
                 const expanded = xCode === j.code
                 return (
                   <Fragment key={j.code}>
@@ -321,8 +348,8 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                     <td className="jdcell">
                       <div className="cell-trunc" title={note ? undefined : `${full}${!open && j.status ? ` · ${j.status}` : ''}`}>
                         <span className="xchev" aria-hidden>▸</span>
-                        {open && j.health && (
-                          <i className={`jdot ${j.health}`} title={`${HEALTH_META[j.health].label} — ${HEALTH_META[j.health].desc}`} />
+                        {open && view && (
+                          <i className={`jdot ${view}`} title={`${HEALTH_META[view].label} — ${HEALTH_META[view].desc}`} />
                         )}
                         <span className="tname">{j.company}</span>{' '}
                         <span className="tsub">{j.code}{j.title ? ` · ${j.title}` : ''}</span>
@@ -334,11 +361,11 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                         </span>
                       )}
                     </td>
-                    <td title={j.startDate ? '수주일 (시트 미기재 시 최초 지원일)' : undefined}>
+                    <td title={j.startDate ? '모집 시작일 (시트 Date Received, 미기재 시 최초 지원일)' : undefined}>
                       {j.startDate ? (
                         <>
                           {fmtDay(j.startDate)}
-                          {open && weeks != null && <span className="tsub"> · {fmtInt(weeks)}주차</span>}
+                          {open && j.days != null && <span className="tsub"> · D+{fmtInt(j.days)}</span>}
                         </>
                       ) : (
                         <span className="dim">–</span>
@@ -362,9 +389,21 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                     <td>{fmtInt(j.docPass)}</td>
                     <td>{fmtInt(j.delivered)}</td>
                     <td>{fmtInt(j.interviews)}</td>
-                    <td>{fmtInt(j.hires)}</td>
-                    <td title={j.headcount ? `입사 ${fmtInt(j.hiresAll)} / TO ${fmtInt(j.headcount)}` : undefined}>
-                      <Meter ratio={j.headcount ? j.hiresAll / j.headcount : null} />
+                    <td title={'채운 자리 — KTC Ops TO_Table 매칭 기준 (이탈은 제외)'}>{fmtInt(j.hiresAll)}</td>
+                    <td
+                      title={
+                        j.headcount
+                          ? `충원 ${fmtInt(j.hiresAll)} / TO ${fmtInt(j.headcount)} · ${Math.round(
+                              (j.hiresAll / j.headcount) * 100
+                            )}%${j.dropped > 0 ? ` (이탈 ${fmtInt(j.dropped)})` : ''} — KTC Ops TO_Table 기준`
+                          : undefined
+                      }
+                    >
+                      {/* 완료 표시는 판정(진행 중 전용)과 별개 — 마감 표에서도 TO를 채웠는지는 같은 의미다 */}
+                      <Meter
+                        ratio={j.headcount ? j.hiresAll / j.headcount : null}
+                        done={j.headcount != null && j.hiresAll >= j.headcount}
+                      />
                     </td>
                   </tr>
                   {expanded && <JdDetail j={j} open={open} colSpan={10} />}

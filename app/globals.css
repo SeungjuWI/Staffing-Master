@@ -378,11 +378,13 @@ tfoot td { border-top: 1px solid var(--baseline); border-bottom: none; font-weig
 }
 
 /* ═══ 공고 판정 (한국 매칭) ═══ */
-/* 판정 점 — 색+실루엣 이중 부호화 (색약 대비): 순항/정체 = 원, 지원 부족 = 사각, 초기 = 빈 원 */
+/* 판정 점 — 색+실루엣 이중 부호화 (색약 대비): 순항/정체 = 원, 지원 부족 = 사각, 초기 = 빈 원,
+   충원 완료 = 액센트 마름모 (녹색 원과 색·모양 모두 구분) */
 .jdot {
   display: inline-block; width: 8px; height: 8px; border-radius: 50%;
   margin-right: 7px; vertical-align: 0;
 }
+.jdot.done { background: var(--accent); border-radius: 2px; transform: rotate(45deg) scale(0.92); }
 .jdot.good { background: var(--ok); }
 .jdot.stall { background: var(--warn); }
 .jdot.low { background: var(--bad); border-radius: 2.5px; }
@@ -459,6 +461,10 @@ th.selcell + th, td.selcell + td { text-align: left; padding-left: 2px; }
   transform-origin: left; animation: growX 0.7s 0.15s var(--ease) both;
 }
 .meter .pct { font-size: 12px; color: var(--ink-2); min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+/* 충원 완료 — % 대신 '완료', 초과 채용이면 실제 %를 흐리게 병기 */
+.meter .fill.done { border-radius: 4px; }
+.meter .pct.done { color: var(--accent); font-weight: 600; min-width: 34px; }
+.meter .pct.done em { font-style: normal; font-weight: 400; color: var(--muted); margin-left: 5px; }
 
 /* ═══ 공고 행 클릭 상세 — 채널별 지원 도넛 + 부수 정보 ═══ */
 /* 채널 고정색: 같은 채널 = 항상 같은 색. validate_palette 통과
