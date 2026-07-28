@@ -1,8 +1,9 @@
 'use client'
 
 // 공고 표 — 컬럼 헤더 클릭 정렬 (팀 요청 2026-07-27: "모집 시작일 최근이 위로, 오름/내림 토글").
-// 클릭 1회 = 내림차순(최근·큰 값 위) → 2회 = 오름차순 → 3회 = 기본(판정 우선) 정렬 복귀.
-// 기본 정렬은 aggregate 의 판정 순(순항→정체→부족→초기)을 그대로 쓴다 — 정렬 상태가 없으면 받은 순서.
+// 클릭 1회 = 내림차순(최근·큰 값 위) → 2회 = 오름차순 → 3회 = 기본 정렬 복귀.
+// 기본 정렬 = 모집 시작일 최근순 (대표 요청 2026-07-28) — 같은 날 시작한 공고끼리는
+// 판정 순(완료→순항→정체→부족→초기)으로 갈라 봐야 할 것이 위로 오게 한다.
 //
 // 공고 선택 (대표 요청 2026-07-27: "공고 몇 개만 선택해서 볼 수 있게"): 진행 중 표에서
 // 체크한 공고만 추려 보는 토글. 선택은 localStorage 에 남아 새로고침·탭 이동에도 유지된다.
@@ -182,7 +183,10 @@ function healthNote(j: JdRow): string {
 }
 
 type SortKey = 'company' | 'received' | 'to' | 'apps' | 'docPass' | 'delivered' | 'interviews' | 'hires' | 'fill'
-type Sort = { key: SortKey; dir: 1 | -1 } | null
+type Sort = { key: SortKey; dir: 1 | -1 }
+
+// 기본 정렬 — 모집 시작 최근순. 다른 열을 세 번 클릭하면 여기로 돌아온다.
+const DEFAULT_SORT: Sort = { key: 'received', dir: -1 }
 
 // 정렬 값 추출 — 문자열(회사명·모집 시작일)은 그대로, 숫자는 number. null 은 항상 맨 아래로.
 const sortVal = (j: JdRow, key: SortKey): string | number | null => {
@@ -207,28 +211,30 @@ function SortTh({
   sort: Sort
   onSort: (k: SortKey) => void
 }) {
-  const on = sort?.key === k
+  const on = sort.key === k
   return (
     <th
       className={on ? 'sortable on' : 'sortable'}
       onClick={() => onSort(k)}
-      title="클릭해 정렬 (한 번 더 = 역순, 또 한 번 = 기본 정렬)"
-      aria-sort={on ? (sort!.dir === -1 ? 'descending' : 'ascending') : 'none'}
+      title="클릭해 정렬 (한 번 더 = 역순, 또 한 번 = 기본 정렬 — 모집 시작 최근순)"
+      aria-sort={on ? (sort.dir === -1 ? 'descending' : 'ascending') : 'none'}
     >
       {label}
-      <span className="sarr" aria-hidden>{on ? (sort!.dir === -1 ? '▼' : '▲') : ''}</span>
+      <span className="sarr" aria-hidden>{on ? (sort.dir === -1 ? '▼' : '▲') : ''}</span>
     </th>
   )
 }
 
 export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 'closed' }) {
   const open = mode === 'open'
-  const [sort, setSort] = useState<Sort>(null)
+  const [sort, setSort] = useState<Sort>(DEFAULT_SORT)
   // 행 클릭 상세 (아코디언 — 한 번에 하나만)
   const [xCode, setXCode] = useState<string | null>(null)
   const onSort = (key: SortKey) => {
     const firstDir: 1 | -1 = key === 'company' ? 1 : -1
-    setSort(s => (s?.key !== key ? { key, dir: firstDir } : s.dir === firstDir ? { key, dir: (-firstDir as 1 | -1) } : null))
+    setSort(s =>
+      s.key !== key ? { key, dir: firstDir } : s.dir === firstDir ? { key, dir: (-firstDir as 1 | -1) } : DEFAULT_SORT
+    )
   }
 
   // 공고 선택 — 서버 렌더와 어긋나지 않게 저장값은 마운트 후에 복원한다
@@ -258,22 +264,21 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
   }
 
   const rows = useMemo(() => {
-    // 기본 정렬 = aggregate 순서 위에 '충원 완료'만 앞으로 (완료는 화면 파생 상태라 aggregate 가 모른다).
-    // 그룹 안 순서는 받은 그대로 — stable sort 이므로 진행 깊은 순·지원자 순이 유지된다.
-    if (!sort) {
-      if (!open) return jds
-      const rank = (j: JdRow) => HEALTH_ORDER.indexOf(jdView(j) ?? 'early')
-      return [...jds].sort((a, b) => rank(a) - rank(b))
-    }
     const { key, dir } = sort
+    // 동점 타이브레이크 = 판정 순(완료→순항→정체→부족→초기). 마감 표는 판정이 없어 받은 순서 유지.
+    const rank = (j: JdRow) => HEALTH_ORDER.indexOf(jdView(j) ?? 'early')
+    const tie = (a: JdRow, b: JdRow) => (open ? rank(a) - rank(b) : 0)
     return [...jds].sort((a, b) => {
       const va = sortVal(a, key)
       const vb = sortVal(b, key)
-      if (va == null && vb == null) return 0
+      if (va == null && vb == null) return tie(a, b)
       if (va == null) return 1 // null 은 정렬 방향과 무관하게 맨 아래
       if (vb == null) return -1
-      if (typeof va === 'string' || typeof vb === 'string') return String(va).localeCompare(String(vb), 'ko') * dir
-      return (va - (vb as number)) * dir
+      const d =
+        typeof va === 'string' || typeof vb === 'string'
+          ? String(va).localeCompare(String(vb), 'ko') * dir
+          : (va - (vb as number)) * dir
+      return d !== 0 ? d : tie(a, b)
     })
   }, [jds, sort, open])
   const filtering = open && only && selected.size > 0
