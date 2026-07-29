@@ -9,12 +9,14 @@ import { RefreshButton } from '@/components/refresh-button'
 
 export const dynamic = 'force-dynamic'
 
+// 개요·베트남 매칭은 아직 미완성이라 내비에서 숨김 (2026-07-29 회의) — 렌더 코드는 남겨두고
+// URL(?tab=overview 등)로는 계속 접근 가능. 완성되면 hidden 만 내리면 된다.
 const TABS = [
-  { key: 'overview', label: '개요' },
-  { key: 'korea', label: '한국 매칭' },
-  { key: 'vietnam', label: '베트남 매칭' },
-  { key: 'talent', label: '인재·채널' },
-  { key: 'glossary', label: '용어' },
+  { key: 'overview', label: '개요', hidden: true },
+  { key: 'korea', label: '한국 매칭', hidden: false },
+  { key: 'vietnam', label: '베트남 매칭', hidden: true },
+  { key: 'talent', label: '인재·채널', hidden: false },
+  { key: 'glossary', label: '용어', hidden: false },
 ] as const
 type TabKey = (typeof TABS)[number]['key']
 
@@ -33,7 +35,7 @@ export default async function Page({
   searchParams: Promise<{ fresh?: string; tab?: string; period?: string }>
 }) {
   const sp = await searchParams
-  const tab: TabKey = (TABS.some(t => t.key === sp.tab) ? sp.tab : 'overview') as TabKey
+  const tab: TabKey = (TABS.some(t => t.key === sp.tab) ? sp.tab : 'korea') as TabKey
   const period: Period = (PERIODS.some(p => p.key === sp.period) ? sp.period : 'all') as Period
   const fresh = sp.fresh === '1'
   const q = (t: string) => `/?tab=${t}&period=${period}`
@@ -49,7 +51,7 @@ export default async function Page({
             Staffing Master<small>글로벌신사업본부</small>
           </div>
           <nav className="nav">
-            {TABS.map(t => (
+            {TABS.filter(t => !t.hidden).map(t => (
               <a key={t.key} className={t.key === tab ? 'on' : ''} href={q(t.key)} data-label={t.label}>
                 {t.label}
               </a>
@@ -598,6 +600,15 @@ async function Dashboard({
               <div>
                 <dt>과거 유입 경로</dt>
                 <dd>지금은 쓰지 않는 유입 경로 (구 시트·구글폼·채널 미상 등) — 채널 표 맨 아래 '과거' 칩으로 구분, 판정 제외</dd>
+              </div>
+              <div>
+                <dt>FYI ~7월 / 8월~</dt>
+                <dd>
+                  FYI 채널을 2026년 8월 1일 기준으로 나눈 두 행 — 7월까지는 FYI 에 KTC 외 공고가 섞여 있어
+                  지원 숫자가 혼합 집계였고, <b>8월부터는 KTC 공고만 남겨</b> 마케팅비 대비 성과를 그대로 읽는다.
+                  지원자는 최초 지원 시점 기준으로 한쪽 행에만 귀속. 비용 시트에는 시간 축이 없어 FYI 지출은
+                  당분간 ~7월 행에 누적 표기 (8월 집행 시작 시 비용 원장에 월 구분 필요)
+                </dd>
               </div>
               <div>
                 <dt>베트남 매칭</dt>

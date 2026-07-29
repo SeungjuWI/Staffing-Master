@@ -43,6 +43,15 @@ function channelNote(c: Channel, h: ChannelHealth, avg: number | null): string {
 // 본표에 남기되 맨 아래 '과거' 칩 + 흐린 이름으로 구분하고 판정에서 제외한다 (접힘 격리는 퇴짜).
 const isActiveChannel = (c: Channel) => channelKind(c.key) != null
 
+// FYI 는 제일 자주 보는 채널이라 판정순 정렬 대신 맨 위 고정 (2026-07-29 회의).
+// 8월 1일 기준 두 시대 행 — 8월~(KTC 공고만 남긴 새 집계)이 위, ~7월(혼합 집계)이 그 아래.
+const FYI_PIN = ['FYI-aug', 'FYI-jul', 'FYI'] // 'FYI' 는 시대 분리 전 데이터(데모 등) 호환
+const fyiPin = (key: string) => { const i = FYI_PIN.indexOf(key); return i < 0 ? FYI_PIN.length : i }
+const FYI_ERA_NOTE: Record<string, string> = {
+  'FYI-aug': '8월 1일부터의 FYI 지원 — KTC 공고만 남긴 새 집계 (가짜 공고 정리 후 0에서 새로 시작)',
+  'FYI-jul': '7월까지의 FYI 지원 — KTC 외 공고가 섞여 있던 시기의 혼합 집계 · 비용 시트에 시간 축이 없어 FYI 지출은 당분간 이 행에 누적',
+}
+
 // 섹션 헤드용 판정 요약 칩 — 기준 설명 툴팁 겸 범례 (기간 보기에서는 비용이 없어 렌더하지 않음)
 export function ChannelHealthSummary({ channels }: { channels: Channel[] }) {
   const active = channels.filter(isActiveChannel)
@@ -80,6 +89,8 @@ export function ChannelTable({ channels }: { channels: Channel[] }) {
   const active = channels
     .filter(isActiveChannel)
     .sort((a, b) => {
+      const pin = fyiPin(a.key) - fyiPin(b.key) // FYI 두 시대 행 맨 위 고정
+      if (pin !== 0) return pin
       if (judged) {
         const d = CH_ORDER.indexOf(channelHealth(a, avg)) - CH_ORDER.indexOf(channelHealth(b, avg))
         if (d !== 0) return d
@@ -119,7 +130,7 @@ export function ChannelTable({ channels }: { channels: Channel[] }) {
                       title={note ? undefined : `${CHANNEL_HEALTH_META[h].label} — ${channelNote(c, h, avg)}`}
                     />
                   )}
-                  <span className={legacy ? 'tname dim' : 'tname'} title={legacy ? '지금은 쓰지 않는 유입 경로 — 판정 제외' : undefined}>
+                  <span className={legacy ? 'tname dim' : 'tname'} title={legacy ? '지금은 쓰지 않는 유입 경로 — 판정 제외' : FYI_ERA_NOTE[c.key]}>
                     {channelLabel(c.key)}
                   </span>
                   {kind && <span className={`ck ${kind}`}>{CHANNEL_KIND_LABELS[kind]}</span>}

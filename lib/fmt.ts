@@ -53,7 +53,10 @@ const CHANNEL_LABELS: Record<string, string> = {
   'jobs-go': 'JobsGO',
   glint: 'Glints',
   'landing-page': '랜딩페이지',
-  FYI: 'FYI (자체 플랫폼)',
+  FYI: 'FYI (자체 플랫폼)', // 시대 분리 전 키 — 공고 상세 도넛 등 시대 무관 표기용
+  // FYI 시대 분리 (2026-07-29 회의): 7월까지는 KTC 외 공고가 섞인 혼합 집계, 8월부터 KTC 공고만
+  'FYI-jul': 'FYI ~7월',
+  'FYI-aug': 'FYI 8월~',
   LinkedIn: 'LinkedIn',
   YBOX: 'YBOX',
   Vieclam24h: 'Vieclam24h',
@@ -72,6 +75,8 @@ const CHANNEL_KIND: Record<string, 'paid' | 'own' | 'free'> = {
   'top-dev': 'paid',
   LinkedIn: 'paid',
   FYI: 'own',
+  'FYI-jul': 'own',
+  'FYI-aug': 'own',
   'landing-page': 'own',
   'jobs-go': 'free',
   'top-cv': 'free',
