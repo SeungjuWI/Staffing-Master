@@ -185,6 +185,15 @@ function healthNote(j: JdRow): string {
 type SortKey = 'company' | 'received' | 'to' | 'apps' | 'docPass' | 'delivered' | 'interviews' | 'hires' | 'fill'
 type Sort = { key: SortKey; dir: 1 | -1 }
 
+// 주차 구분선 (2026-07-29 회의: "주마다 구분선 — D+7, D+14") — 모집 시작순 정렬일 때만 그린다.
+// 6주(D+42)부터는 정체 판정 경계 너머라 한 묶음으로 접는다.
+const weekBucket = (days: number | null) => (days == null ? null : Math.min(Math.floor(days / 7), 6))
+const weekLabel = (b: number | null): [string, string] =>
+  b == null ? ['모집 시작일 미상', '']
+  : b === 0 ? ['모집 1주차', 'D+7 미만']
+  : b === 6 ? ['모집 6주 초과', 'D+42~']
+  : [`모집 ${b + 1}주차`, `D+${b * 7}~${b * 7 + 6}`]
+
 // 기본 정렬 — 모집 시작 최근순. 다른 열을 세 번 클릭하면 여기로 돌아온다.
 const DEFAULT_SORT: Sort = { key: 'received', dir: -1 }
 
@@ -283,6 +292,8 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
   }, [jds, sort, open])
   const filtering = open && only && selected.size > 0
   const shown = filtering ? rows.filter(j => selected.has(j.code)) : rows
+  // 다른 열로 정렬하면 주차가 섞여 구분선이 무의미해진다 — 모집 시작순(기본 정렬 포함)일 때만
+  const weekSep = open && sort.key === 'received'
 
   if (!jds.length) return <EmptyState message="표시할 공고가 없습니다." />
 
@@ -327,14 +338,24 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
               </tr>
             </thead>
             <tbody>
-              {shown.map(j => {
+              {shown.map((j, i) => {
                 const full = `${j.company} ${j.code}${j.title ? ` · ${j.title}` : ''}`
                 const view = jdView(j)
                 // 완료·순항은 툴팁 없음 (숫자 열이 이미 설명) — 문제/유예 공고만 호버로 판정 이유 노출
                 const note = open && view && view !== 'good' && view !== 'done' ? healthNote(j) : null
                 const expanded = xCode === j.code
+                const wb = weekBucket(j.days)
+                const [wkName, wkRange] = weekSep && (i === 0 || weekBucket(shown[i - 1].days) !== wb) ? weekLabel(wb) : ['', '']
                 return (
                   <Fragment key={j.code}>
+                  {wkName && (
+                    <tr className="wkrow">
+                      <td colSpan={10}>
+                        {wkName}
+                        {wkRange && <span className="dim"> · {wkRange}</span>}
+                      </td>
+                    </tr>
+                  )}
                   <tr
                     className={expanded ? 'jdxrow jdxon' : 'jdxrow'}
                     onClick={() => setXCode(c => (c === j.code ? null : j.code))}

@@ -98,6 +98,12 @@ const NO_RESPONSE_DAYS = 42
 // VN(UTC+7) 기준 YYYY-MM
 const toVNMonth = (iso: string) => new Date(new Date(iso).getTime() + 7 * 3600000).toISOString().slice(0, 7)
 
+// FYI 채널 시대 분리 (2026-07-29 회의) — 8월부터 FYI 에는 KTC 공고만 남긴다(가짜 공고 정리).
+// 7월까지는 KTC 외 공고 지원이 섞인 혼합 숫자라, 채널 표에서 ~7월 / 8월~ 두 행으로 나눠 본다.
+// 날짜 없는 기록은 분리선(8/1) 이전 데이터일 수밖에 없어 ~7월로 귀속.
+const FYI_CLEAN_MS = new Date('2026-08-01T00:00:00+07:00').getTime()
+const fyiEra = (iso: string | null) => (iso && new Date(iso).getTime() >= FYI_CLEAN_MS ? 'FYI-aug' : 'FYI-jul')
+
 // 월별 카운트 맵 → 연속 월 축 (파싱 오류로 생긴 미래 월 제거, 빈 월 0 채움, 최대 12개월)
 function toMonthSeries(byMonth: Record<string, number>, nowMonth: string): MonthPoint[] {
   const valid = Object.keys(byMonth).filter(m => m <= nowMonth).sort()
@@ -608,9 +614,14 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     ? candidates
     : candidates.filter(c => inPeriod(parseAppliedAt(c.applied_date, c.sheet_source)))
   const cohortEmails = new Set(periodCandidates.map(c => String(c.email || '').toLowerCase()).filter(Boolean))
-  const fyiEmailsPeriod = start == null
-    ? fyiEmails
-    : new Set(fyiApps.filter(a => inPeriod(a.created_at)).map(a => String(a.applicant_email).toLowerCase()))
+  // FYI 지원자(고유 이메일)는 최초 지원 시각의 시대(~7월/8월~)로 귀속 — 두 행 이중 계상 방지
+  const fyiFirstAt: Record<string, string> = {}
+  for (const a of fyiApps) {
+    if (!inPeriod(a.created_at)) continue
+    const e = String(a.applicant_email).toLowerCase()
+    const at = String(a.created_at || '')
+    if (!fyiFirstAt[e] || (at && at < fyiFirstAt[e])) fyiFirstAt[e] = at
+  }
 
   const chan: Record<string, ChanAcc> = {}
   const bump = (key: string, field: 'people' | 'applications' | 'docPass' | 'interviews' | 'hires') => {
@@ -622,7 +633,9 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   let screenPass = 0, delivered = 0, interviewPipe = 0, offerReached = 0, finalPassed = 0
 
   for (const c of periodCandidates) {
-    const ch = c.sheet_source || '(미상)'
+    const src = c.sheet_source || '(미상)'
+    // FYI 유입은 지원 시점 기준으로 ~7월/8월~ 행에 귀속 (공고별 귀속은 시대 무관 그대로)
+    const ch = src === 'FYI' ? fyiEra(parseAppliedAt(c.applied_date, src)) : src
     const code = codeForCandidate(c)
     const st = c.pipeline_status || 'new'
     bump(ch, 'people')
@@ -642,10 +655,15 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     }
   }
 
-  // FYI 채널 지원자는 salarymap 라이브가 정답 (파이프라인 유입분보다 넓다)
-  if (fyiEmailsPeriod.size) {
-    const c = chan.FYI || (chan.FYI = { key: 'FYI', people: 0, applications: 0, docPass: 0, interviews: 0, hires: 0, jobsPosted: null, spendFees: null, spendAds: null })
-    c.people = Math.max(c.people, fyiEmailsPeriod.size)
+  // FYI 채널 지원자는 salarymap 라이브가 정답 (파이프라인 유입분보다 넓다).
+  // 두 시대 행은 데이터가 없어도 항상 만든다 — 8월~ 행이 0에서 새로 시작함을 화면에서 보여주기 위함.
+  {
+    const eraPeople: Record<string, number> = {}
+    for (const at of Object.values(fyiFirstAt)) eraPeople[fyiEra(at)] = (eraPeople[fyiEra(at)] || 0) + 1
+    for (const key of ['FYI-jul', 'FYI-aug']) {
+      const c = chan[key] || (chan[key] = { key, people: 0, applications: 0, docPass: 0, interviews: 0, hires: 0, jobsPosted: null, spendFees: null, spendAds: null })
+      c.people = Math.max(c.people, eraPeople[key] || 0)
+    }
   }
 
   // ── 지원 건 (ktc_applications + FYI 라이브) ────────────────
@@ -661,7 +679,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       if (a.applied_at && a.applied_at <= lastAppCap && (!j.lastApp || a.applied_at > j.lastApp)) j.lastApp = a.applied_at
     }
     if (!inPeriod(a.applied_at)) continue
-    bump(a.sheet_source || '(미상)', 'applications')
+    // 시트 경로엔 FYI 탭이 없지만(스킵), DB 폴백엔 있을 수 있어 여기도 시대 행으로 귀속
+    bump(a.sheet_source === 'FYI' ? fyiEra(a.applied_at) : a.sheet_source || '(미상)', 'applications')
     applicationsTotal++
     if (a.job_code) {
       const j = jd(a.job_code)
@@ -725,7 +744,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       if (a.created_at && a.created_at <= lastAppCap && (!j.lastApp || a.created_at > j.lastApp)) j.lastApp = a.created_at
     }
     if (!inPeriod(a.created_at)) continue
-    bump('FYI', 'applications')
+    bump(fyiEra(a.created_at), 'applications')
     applicationsTotal++
     if (code) {
       const j = jd(code)
@@ -790,7 +809,9 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   if (raw.cost) {
     for (const c of Object.values(chan)) {
       const fees = raw.cost.spendByChannel[c.key]
-      const ads = c.key === 'landing-page' ? (raw.cost.ktcMeta || null) : c.key === 'FYI' ? (raw.cost.fyiKtcMeta || null) : null
+      // FYI 광고비는 비용 시트에 시간 축이 없어 일단 ~7월 행에 전액 누적 — 8월 마케팅 집행이
+      // 시작되면 비용 원장에 월 구분을 만들어 8월~ 행 몫을 분리해야 한다
+      const ads = c.key === 'landing-page' ? (raw.cost.ktcMeta || null) : c.key === 'FYI-jul' ? (raw.cost.fyiKtcMeta || null) : null
       if (fees != null || ads != null) {
         c.spendFees = fees ?? 0
         c.spendAds = ads ?? 0
@@ -802,7 +823,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // ── 채널 목록 완성 (전 지표 0인 채널은 제외) ────────────────
   // 비용 시트는 시간 축이 없어 기간 보기에서는 비용 열을 비운다
   const channels: Channel[] = Object.values(chan)
-    .filter(c => c.people + c.applications + c.docPass + c.interviews + c.hires > 0)
+    // FYI 두 시대 행은 0이어도 표시 — 8월~ 행이 새로 시작하는 구조 자체가 정보다
+    .filter(c => c.key.startsWith('FYI') || c.people + c.applications + c.docPass + c.interviews + c.hires > 0)
     .map(c => {
       const fees = start == null ? c.spendFees : null
       const ads = start == null ? c.spendAds : null
@@ -1040,7 +1062,8 @@ const getCachedByPeriod = unstable_cache(
       '30d': computeFromRaw(raw, '30d', at),
     }
   },
-  ['staffing-master-data-v14'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  // v15 는 점검 탭 작업(별도 세션)이 선점한 적 있어 건너뜀 — Data Cache 는 배포로 안 비워져 재사용 위험
+  ['staffing-master-data-v16'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

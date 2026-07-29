@@ -343,6 +343,14 @@ tbody tr { transition: background 0.13s; }
 tbody tr:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
 tr:last-child td { border-bottom: none; }
 tfoot td { border-top: 1px solid var(--baseline); border-bottom: none; font-weight: 650; }
+/* 진행 중 공고 주차 구분 행 (모집 시작순 정렬일 때만) — D+7 단위 묶음 (2026-07-29 회의) */
+tr.wkrow td {
+  padding: 13px 8px 4px; border-bottom: 1px solid var(--baseline);
+  text-align: left; font-size: 11px; font-weight: 650; color: var(--muted);
+  letter-spacing: 0.02em; white-space: nowrap;
+}
+tr.wkrow td .dim { font-weight: 400; }
+tbody tr.wkrow:hover { background: transparent; }
 .tname { font-weight: 600; }
 .tsub { color: var(--muted); font-size: 12px; font-weight: 400; }
 .dim { color: var(--muted); }
