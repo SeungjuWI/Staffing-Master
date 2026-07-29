@@ -1,4 +1,4 @@
-// 지원 미달 알림 — Vercel Cron 이 매일 10:30 KST(= 베트남 08:30 출근)에 호출.
+// 지원 미달 알림 — Vercel Cron 이 매일 09:00 KST(= 베트남 07:00)에 호출.
 // 모집 중 공고가 모집 시작 D+3 이상인데 누적 지원이 TO×10건 미만이면 슬랙으로 알린다.
 // 하루 1회 stateless 다이제스트: days===3 이 "오늘 신규", 그 뒤로는 해소될 때까지 "계속 미달"에 남는다.
 // 필요 env: SLACK_ALERT_WEBHOOK_URL (없으면 SLACK_WEBHOOK_URL 폴백), CRON_SECRET (호출 보호, 권장)
@@ -81,9 +81,10 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  const worst = (a: Flagged, b: Flagged) => a.apps / a.target - b.apps / b.target
-  const fresh = flagged.filter(f => f.days === FROM_DAY).sort(worst)
-  const ongoing = flagged.filter(f => f.days > FROM_DAY).sort(worst)
+  // 오래된(D+N 큰) 순 — 오래 미달일수록 시급 (피드백). 같은 날짜면 달성률 낮은 순
+  const urgent = (a: Flagged, b: Flagged) => b.days - a.days || a.apps / a.target - b.apps / b.target
+  const fresh = flagged.filter(f => f.days === FROM_DAY).sort(urgent)
+  const ongoing = flagged.filter(f => f.days > FROM_DAY).sort(urgent)
 
   const total = fresh.length + ongoing.length + noDate.length
   const divider = { type: 'divider' }
