@@ -512,6 +512,7 @@ tr.jdx > td { padding: 0 10px 16px; background: color-mix(in srgb, var(--accent)
 .jdx-facts dd .jdot { margin-right: 2px; }
 
 /* ═══ 접기 (마감 공고) ═══ */
+.chfix { table-layout: fixed; }
 details.fold { margin-top: 14px; border-top: 1px solid var(--grid); padding-top: 10px; }
 details.fold summary {
   cursor: pointer; color: var(--ink-2); font-size: 13px; list-style: none;
