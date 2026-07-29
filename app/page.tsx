@@ -4,6 +4,7 @@ import { fmtDateTime, fmtInt, fmtKrw, fmtPct, fmtSinceMonth, fmtUsd } from '@/li
 import { Funnel, MonthlyBars, StatTile } from '@/components/viz'
 import { ChannelHealthSummary, ChannelTable, CompanyTable, JdHealthSummary } from '@/components/tables'
 import { JdTable } from '@/components/jd-table'
+import { DailyChannelLines } from '@/components/daily-chart'
 import { CountUp } from '@/components/count-up'
 import { RefreshButton } from '@/components/refresh-button'
 
@@ -481,6 +482,16 @@ async function Dashboard({
             </div>
             <div className="card">
               <MonthlyBars points={supply.monthly} />
+            </div>
+          </section>
+
+          <section className="section">
+            <div className="section-head">
+              <h2>일별 지원 건 추이</h2>
+              <span className="sub">최근 30일 · 채널별, 지원일 기준 — 그래프에 마우스를 올리면 날짜별 상세</span>
+            </div>
+            <div className="card">
+              <DailyChannelLines points={supply.daily} />
             </div>
           </section>
         </>

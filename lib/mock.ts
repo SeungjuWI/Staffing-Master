@@ -38,6 +38,18 @@ export function mockData(): MasterData {
         { month: '2026-03', count: 204 }, { month: '2026-04', count: 188 }, { month: '2026-05', count: 231 },
         { month: '2026-06', count: 259 }, { month: '2026-07', count: 217 },
       ],
+      daily: Array.from({ length: 30 }, (_, i) => {
+        const d = new Date(Date.now() - (29 - i) * 86400000)
+        const wave = (base: number, amp: number, phase: number) =>
+          Math.max(0, Math.round(base + amp * Math.sin((i + phase) / 3) + (i % 7 === 0 ? -base * 0.6 : 0)))
+        return {
+          date: d.toISOString().slice(0, 10),
+          byChannel: {
+            'landing-page': wave(9, 4, 0), 'ITviec-api': wave(7, 3, 2), 'top-dev': wave(3, 2, 4),
+            FYI: wave(4, 2, 1), 'jobs-go': wave(2, 1, 5), LinkedIn: wave(1, 1, 3),
+          },
+        }
+      }),
     },
     matching: {
       funnel: [

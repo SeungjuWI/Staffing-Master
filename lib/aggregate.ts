@@ -18,7 +18,7 @@
 
 import { unstable_cache } from 'next/cache'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
-import type { Channel, CompanyPerf, FunnelStage, JdRow, MasterData, MonthPoint, VietnamBlock } from './types'
+import type { Channel, CompanyPerf, DayPoint, FunnelStage, JdRow, MasterData, MonthPoint, VietnamBlock } from './types'
 import { mockData } from './mock'
 
 const MASTER_SHEET_ID = process.env.MASTER_SHEET_ID || '1mR1_-a3LmjxAbbox3tTKBu6WYwDbfBYKmPB6TP9EnKI'
@@ -45,6 +45,13 @@ const COST_CHANNEL_MAP: Record<string, string> = {
   topdev: 'top-dev', itviec: 'ITviec-api', ybox: 'YBOX',
   glints: 'glint', linkedin: 'LinkedIn', jobsgo: 'jobs-go', topcv: 'top-cv',
 }
+
+// 채널 표 합산 — it-viec-manual 탭은 같은 사이트(ITviec)의 수기 탭인데, 파이프라인 동기화가
+// 이 탭을 안 읽어 지원자~입사가 전부 0인 유령 행으로 떴고 비용도 매핑상 ITviec-api 행에만
+// 붙는다 → 한 행으로 합산 (공고 표 CH_SITE 와 같은 원칙, 2026-07-29 대표 지시).
+// 동기화가 이 탭을 수집하기 시작해도 같은 사이트라 합산이 맞다.
+const CHANNEL_MERGE: Record<string, string> = { 'it-viec-manual': 'ITviec-api' }
+const mergedChannel = (src: string) => CHANNEL_MERGE[src] || src
 const costChannelKey = (s: unknown) =>
   COST_CHANNEL_MAP[String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')]
 
@@ -95,8 +102,10 @@ const EARLY_DAYS = 7 // 모집 시작 1주 미만은 판정 유예 (모집 초�
 // 무반응 공고의 모집 주차가 2~4주와 8~12주로 갈라져(중간 공백) 6주를 경계로 삼음 (2026-07-28)
 const NO_RESPONSE_DAYS = 42
 
-// VN(UTC+7) 기준 YYYY-MM
+// VN(UTC+7) 기준 YYYY-MM / YYYY-MM-DD
 const toVNMonth = (iso: string) => new Date(new Date(iso).getTime() + 7 * 3600000).toISOString().slice(0, 7)
+const toVNDay = (iso: string) => new Date(new Date(iso).getTime() + 7 * 3600000).toISOString().slice(0, 10)
+const DAILY_WINDOW = 30 // 일별 채널 추이 창 (오늘 포함 최근 30일)
 
 // FYI 채널 시대 분리 (2026-07-29 회의) — 8월부터 FYI 에는 KTC 공고만 남긴다(가짜 공고 정리).
 // 7월까지는 KTC 외 공고 지원이 섞인 혼합 숫자라, 채널 표에서 ~7월 / 8월~ 두 행으로 나눠 본다.
@@ -635,7 +644,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   for (const c of periodCandidates) {
     const src = c.sheet_source || '(미상)'
     // FYI 유입은 지원 시점 기준으로 ~7월/8월~ 행에 귀속 (공고별 귀속은 시대 무관 그대로)
-    const ch = src === 'FYI' ? fyiEra(parseAppliedAt(c.applied_date, src)) : src
+    const ch = src === 'FYI' ? fyiEra(parseAppliedAt(c.applied_date, src)) : mergedChannel(src)
     const code = codeForCandidate(c)
     const st = c.pipeline_status || 'new'
     bump(ch, 'people')
@@ -669,9 +678,20 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // ── 지원 건 (ktc_applications + FYI 라이브) ────────────────
   // 월별 추이는 기간 필터와 무관하게 전체 시계열 유지
   const monthly: Record<string, number> = {}
+  // 일별 채널 추이 (최근 30일) — 월별과 같은 원칙으로 기간 필터 무관
+  const dayFloor = toVNDay(new Date(fetchedAt - (DAILY_WINDOW - 1) * 86400000).toISOString())
+  const dayCap = toVNDay(new Date(fetchedAt).toISOString())
+  const dailyMap: Record<string, Record<string, number>> = {}
+  const bumpDay = (iso: string | null, ch: string) => {
+    if (!iso) return
+    const d = toVNDay(iso)
+    if (d < dayFloor || d > dayCap) return
+    ;(dailyMap[d] = dailyMap[d] || {})[ch] = (dailyMap[d][ch] || 0) + 1
+  }
   let applicationsTotal = 0
   for (const a of applications) {
     if (a.applied_at) monthly[toVNMonth(a.applied_at)] = (monthly[toVNMonth(a.applied_at)] || 0) + 1
+    bumpDay(a.applied_at, mergedChannel(a.sheet_source || '(미상)'))
     if (a.job_code) {
       const j = jdAll(a.job_code)
       j.apps++ // 스톡 지원 건 — 지원 부족 판정 재료 (기간 필터 무관)
@@ -680,7 +700,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     }
     if (!inPeriod(a.applied_at)) continue
     // 시트 경로엔 FYI 탭이 없지만(스킵), DB 폴백엔 있을 수 있어 여기도 시대 행으로 귀속
-    bump(a.sheet_source === 'FYI' ? fyiEra(a.applied_at) : a.sheet_source || '(미상)', 'applications')
+    bump(a.sheet_source === 'FYI' ? fyiEra(a.applied_at) : mergedChannel(a.sheet_source || '(미상)'), 'applications')
     applicationsTotal++
     if (a.job_code) {
       const j = jd(a.job_code)
@@ -736,6 +756,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   }
   for (const a of fyiApps) {
     if (a.created_at) monthly[toVNMonth(a.created_at)] = (monthly[toVNMonth(a.created_at)] || 0) + 1
+    bumpDay(a.created_at, 'FYI')
     const code = fyiCodeForJob(a.job_id)
     if (code) {
       const j = jdAll(code)
@@ -991,6 +1012,13 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // 월별 지원 추이: 미래 월 제거 + 빈 월 0 채움 (연속 12개월 축)
   const monthlyArr = toMonthSeries(monthly, nowMonth)
 
+  // 일별 채널 추이: 연속 30일 축 (빈 날은 빈 객체 — 0 채움은 차트가 처리)
+  const daily: DayPoint[] = []
+  for (let i = DAILY_WINDOW - 1; i >= 0; i--) {
+    const d = toVNDay(new Date(fetchedAt - i * 86400000).toISOString())
+    daily.push({ date: d, byChannel: dailyMap[d] || {} })
+  }
+
   return {
     generatedAt: new Date(fetchedAt).toISOString(),
     mode: 'live',
@@ -1013,6 +1041,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       applicationsTotal,
       channels,
       monthly: monthlyArr,
+      daily,
     },
     matching: {
       funnel,
@@ -1063,7 +1092,7 @@ const getCachedByPeriod = unstable_cache(
     }
   },
   // v15 는 점검 탭 작업(별도 세션)이 선점한 적 있어 건너뜀 — Data Cache 는 배포로 안 비워져 재사용 위험
-  ['staffing-master-data-v16'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v18'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 
