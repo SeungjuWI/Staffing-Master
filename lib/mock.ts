@@ -7,6 +7,7 @@ export function mockData(): MasterData {
     mode: 'mock',
     warnings: [],
     sheetLinks: {}, // 데모 모드에는 실제 시트가 없어 출처 말풍선의 링크를 걸지 않는다
+    spendAsOf: null,
     headline: {
       hiresTotal: 17,
       hiresInPeriod: null,
@@ -24,8 +25,8 @@ export function mockData(): MasterData {
       candidatesTotal: 1246,
       applicationsTotal: 1893,
       channels: [
-        { key: 'FYI-aug', people: 0, applications: 0, docPass: 0, interviews: 0, hires: 0, jobsPosted: null, spendFees: null, spendAds: null, spendKrw: null, cpaKrw: null, costPerHireKrw: null },
-        { key: 'FYI-jul', people: 288, applications: 402, docPass: 74, interviews: 12, hires: 4, jobsPosted: null, spendFees: 0, spendAds: 1800000, spendKrw: 1800000, cpaKrw: 6250, costPerHireKrw: 450000 },
+        { key: 'FYI-post', people: 12, applications: 18, docPass: 3, interviews: 0, hires: 0, jobsPosted: null, spendFees: 0, spendAds: 240000, spendKrw: 240000, cpaKrw: 20000, costPerHireKrw: null },
+        { key: 'FYI-pre', people: 288, applications: 402, docPass: 74, interviews: 12, hires: 4, jobsPosted: null, spendFees: 0, spendAds: 1800000, spendKrw: 1800000, cpaKrw: 6250, costPerHireKrw: 450000 },
         { key: 'ITviec-api', people: 412, applications: 655, docPass: 118, interviews: 21, hires: 6, jobsPosted: 12, spendFees: 5200000, spendAds: 0, spendKrw: 5200000, cpaKrw: 12621, costPerHireKrw: 866667 },
         { key: 'LinkedIn', people: 231, applications: 344, docPass: 61, interviews: 11, hires: 3, jobsPosted: 8, spendFees: 3600000, spendAds: 0, spendKrw: 3600000, cpaKrw: 15584, costPerHireKrw: 1200000 },
         { key: 'landing-page', people: 154, applications: 260, docPass: 38, interviews: 8, hires: 2, jobsPosted: null, spendFees: 0, spendAds: 2400000, spendKrw: 2400000, cpaKrw: 15584, costPerHireKrw: 1200000 },

@@ -20,6 +20,7 @@
 import { unstable_cache } from 'next/cache'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import type { Channel, CompanyPerf, DayPoint, FunnelStage, JdRow, MasterData, MonthPoint, VietnamBlock } from './types'
+import { ACTION_DAY, prevDay } from './fmt'
 import { mockData } from './mock'
 
 const MASTER_SHEET_ID = process.env.MASTER_SHEET_ID || '1mR1_-a3LmjxAbbox3tTKBu6WYwDbfBYKmPB6TP9EnKI'
@@ -108,11 +109,18 @@ const toVNMonth = (iso: string) => new Date(new Date(iso).getTime() + 7 * 360000
 const toVNDay = (iso: string) => new Date(new Date(iso).getTime() + 7 * 3600000).toISOString().slice(0, 10)
 const DAILY_WINDOW = 30 // 일별 채널 추이 창 (오늘 포함 최근 30일)
 
-// FYI 채널 시대 분리 (2026-07-29 회의) — 8월부터 FYI 에는 KTC 공고만 남긴다(가짜 공고 정리).
-// 7월까지는 KTC 외 공고 지원이 섞인 혼합 숫자라, 채널 표에서 ~7월 / 8월~ 두 행으로 나눠 본다.
-// 날짜 없는 기록은 분리선(8/1) 이전 데이터일 수밖에 없어 ~7월로 귀속.
-const FYI_CLEAN_MS = new Date('2026-08-01T00:00:00+07:00').getTime()
-const fyiEra = (iso: string | null) => (iso && new Date(iso).getTime() >= FYI_CLEAN_MS ? 'FYI-aug' : 'FYI-jul')
+// FYI 채널 시대 분리 (2026-07-29 회의) — 분리선 이후 FYI 에는 KTC 공고만 남긴다(가짜 공고 정리).
+// 그 전은 KTC 외 공고 지원이 섞인 혼합 숫자라, 채널 표에서 ~7/27 / 7/28~ 두 행으로 나눠 본다.
+// 2026-07-30: 분리선을 8/1(월 경계) → ACTION_DAY(7/28, 실제 액션 시작일)로 교체 — 월 단위로
+// 끊으면 7/28~31 의 새 집행 성과가 옛 시대 행에 섞인다. 날짜 없는 기록은 분리선 이전으로 귀속.
+const ACTION_MS = new Date(`${ACTION_DAY}T00:00:00+07:00`).getTime()
+const ACTION_PREV_DAY = prevDay(ACTION_DAY)
+const fyiEra = (iso: string | null) => (iso && new Date(iso).getTime() >= ACTION_MS ? 'FYI-post' : 'FYI-pre')
+
+// 일자별 금액 맵에서 [from, to] 구간 합 (경계 포함, null = 무제한)
+const sumDays = (m: Record<string, number> | undefined, from: string | null, to: string | null) =>
+  m == null ? 0 : Object.entries(m).reduce((s, [d, v]) => (from != null && d < from) || (to != null && d > to) ? s : s + v, 0)
+const laterDay = (a: string | null, b: string) => (a != null && a > b ? a : b)
 
 // 월별 카운트 맵 → 연속 월 축 (파싱 오류로 생긴 미래 월 제거, 빈 월 0 채움, 최대 12개월)
 function toMonthSeries(byMonth: Record<string, number>, nowMonth: string): MonthPoint[] {
@@ -223,13 +231,19 @@ export function hasLiveEnv() {
   )
 }
 
-export type Period = 'all' | 'month' | '30d'
+// 'action' = 액션 분리선(ACTION_DAY, 7/28) 이후 — 월 경계로는 안 잡히는 "지금 하고 있는 것"만 보는 창
+export type Period = 'all' | 'action' | 'month' | '30d'
 
 type CostData = {
-  spendByChannel: Record<string, number>
+  spendByChannel: Record<string, number>  // 채널별 누적 지출 (KRW) — 정본 총액
   postedByChannel: Record<string, number>
-  ktcMeta: number
-  fyiMeta: number
+  ktcMeta: number                          // 랜딩(KTC 채용 캠페인) 광고비 누적
+  fyiMeta: number                          // FYI 캠페인 광고비 누적
+  // ── 일자 축 (2026-07-30 추가) ─────────────────────────────
+  // 예산을 날짜로 쪼개 보기 위한 분해. 누적 총액은 위 값이 정본이고, 아래는 기간 배분용.
+  feeDays: Record<string, Record<string, number>> // 채널 → 일자(YYYY-MM-DD) → 게재비 KRW
+  adDays: { fyi: Record<string, number>; landing: Record<string, number> } // Meta 광고비 일별
+  adDayMax: string | null  // 광고 원본(meta-raw-data)이 반영된 마지막 날짜 — 그 뒤는 0 이 아니라 '미반영'
 }
 
 type Raw = {
@@ -392,20 +406,30 @@ async function fetchRaw(): Promise<Raw> {
     if (!cmpTab || !metaTab || !invTab) throw new Error(`탭 탐지 실패 (비교표:${cmpTab} 캠페인:${metaTab} 인보이스:${invTab})`)
     const liTab = tabs.find((t: string) => t.toUpperCase().includes('LINKEDIN'))
     const sumTab = findTab('campaign-summary') // 12. meta-campaign-summary — 캠페인 분류 원장
-    const ranges = [`'${cmpTab}'!A1:M15`, `'${metaTab}'!A1:H60`, `'${invTab}'!A1:S30`]
+    const rawTab = findTab('raw-data')          // 11. meta-raw-data — 광고비 일자 원장 (Date × Campaign × Spend)
+    const ranges = [`'${cmpTab}'!A1:M15`, `'${metaTab}'!A1:H60`, `'${invTab}'!A1:S60`]
     const liIdx = liTab ? ranges.push(`'${liTab}'!A1:N120`) - 1 : -1
     const sumIdx = sumTab ? ranges.push(`'${sumTab}'!A1:M60`) - 1 : -1
+    const rawIdx = rawTab ? ranges.push(`'${rawTab}'!A1:N9000`) - 1 : -1
     const got = await batchGet(COST_SHEET_ID, ranges)
     const [cmpRows, metaRows, invRows] = got
     const liRows = liIdx >= 0 ? got[liIdx] : []
     const sumRows = sumIdx >= 0 ? got[sumIdx] : []
+    const adRawRows = rawIdx >= 0 ? got[rawIdx] : []
 
-    const hIdx = cmpRows.findIndex((r: any[]) => r.some(c => String(c || '').trim() === '채널') && r.some(c => String(c || '').startsWith('지출')))
+    // 채널 열 이름은 '채널' 또는 '분류' (시트 개편으로 바뀜) — 둘 다 받는다
+    const isChanHead = (c: any) => ['채널', '분류'].includes(String(c || '').trim())
+    const hIdx = cmpRows.findIndex((r: any[]) => r.some(isChanHead) && r.some(c => String(c || '').startsWith('지출')))
     const spendByChannel: Record<string, number> = {}
     const postedByChannel: Record<string, number> = {}
+    const feeDays: Record<string, Record<string, number>> = {}
+    const addFeeDay = (key: string, day: string, krw: number) => {
+      const m = feeDays[key] || (feeDays[key] = {})
+      m[day] = (m[day] || 0) + krw
+    }
     if (hIdx >= 0) {
       const H = cmpRows[hIdx]
-      const chanCol = H.findIndex((c: any) => String(c || '').trim() === '채널')
+      const chanCol = H.findIndex(isChanHead)
       let spendCol = H.findIndex((c: any) => String(c || '').startsWith('지출'))
       const subCostCol = (cmpRows[hIdx + 1] || []).findIndex((c: any) => String(c || '').includes('비용'))
       if (subCostCol >= 0) spendCol = subCostCol
@@ -444,23 +468,52 @@ async function fetchRaw(): Promise<Raw> {
     for (const [key, vnd] of Object.entries(invoiceVnd)) {
       spendByChannel[key] = (vnd / (INVOICE_VAT[key] || 1.1)) * vndToKrw
     }
-    // LinkedIn: KTC 공고코드 슬롯만 (자사 채용 슬롯 제외)
+    // 게재비의 일자 축 — 인보이스 상세 블록(좌측)의 '일자' 열. 패키지형(ITviec 5건·TopDev 4건)은
+    // 구매 시점에 전액 계상한다(집행 기간이 아니라 결제일 기준) — 시트가 관리하는 단위가 인보이스라서.
+    // 금액은 '공급가액'(VAT 제외) 그대로 — 위 합계(VAT포함/VAT율)와 같은 값이 된다.
+    if (invH >= 0) {
+      const IH = invRows[invH]
+      const dPlatCol = IH.findIndex((c: any) => String(c || '').trim() === '플랫폼') // 상세 블록이 먼저 나온다
+      const dSupplyCol = IH.findIndex((c: any) => /공급가액/.test(String(c || '')))
+      const dDayCol = IH.findIndex((c: any) => String(c || '').trim() === '일자')
+      if (dPlatCol >= 0 && dSupplyCol >= 0 && dDayCol >= 0) {
+        for (const r of invRows.slice(invH + 1)) {
+          if (!String(r[dPlatCol] || '').trim()) break // 상세 블록 끝
+          const key = costChannelKey(r[dPlatCol])
+          const day = String(r[dDayCol] || '').trim()
+          const vnd = parseKrw(r[dSupplyCol])
+          if (!key || !vnd || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue
+          addFeeDay(key, day, vnd * vndToKrw)
+        }
+      }
+    }
+    // LinkedIn: KTC 공고코드 슬롯만 (자사 채용 슬롯 제외).
+    // 일자는 슬롯 게재 시작일(Start Date) — 종량형이라 실제로 돈이 나가기 시작한 날이다.
+    // 인보이스 일자가 아니라 이쪽을 쓰는 이유: 총액도 이 탭(KTC 슬롯만)이 정본이라 짝을 맞춘다.
     if (liRows && liRows.length) {
       const liH = liRows.findIndex((r: any[]) => r.includes('Job code') && r.some(c => String(c || '').startsWith('Cost')))
       if (liH >= 0) {
         const LH = liRows[liH]
         const costCol = LH.findIndex((c: any) => String(c || '').startsWith('Cost'))
         const codeCol = LH.indexOf('Job code')
+        const startCol = LH.indexOf('Start Date')
         let ktcVnd = 0
         const liCodes = new Set<string>()
+        const liDays: Record<string, number> = {}
         for (const r of liRows.slice(liH + 1)) {
           const code = (String(r[codeCol] || '').trim().match(/^[A-Z]{2,6}\d{3,4}/) || [])[0]
           if (!code) continue
           const c = parseKrw(r[costCol])
-          if (c != null) { ktcVnd += c; liCodes.add(code) }
+          if (c != null) {
+            ktcVnd += c
+            liCodes.add(code)
+            const day = startCol >= 0 ? String(r[startCol] || '').trim() : ''
+            if (/^\d{4}-\d{2}-\d{2}$/.test(day)) liDays[day] = (liDays[day] || 0) + c * vndToKrw
+          }
         }
         if (ktcVnd > 0) {
           spendByChannel.LinkedIn = ktcVnd * vndToKrw
+          feeDays.LinkedIn = liDays // 인보이스 일자 분해는 버린다 (총액 정본이 이 탭이므로)
           if (postedByChannel.LinkedIn == null) postedByChannel.LinkedIn = liCodes.size
         }
       }
@@ -490,6 +543,12 @@ async function fetchRaw(): Promise<Raw> {
         ktcRecruitByKey[campaignKey(name)] = flag === 'yes'
       }
     }
+    // 캠페인 → 채널 버킷 (총액과 일별 분해가 같은 규칙을 쓰도록 함수 하나로 뽑음)
+    const campaignBucket = (name: string): 'fyi' | 'landing' | null => {
+      if (/^fyi/i.test(name)) return 'fyi'
+      const ledger = ktcRecruitByKey[campaignKey(name)]
+      return (ledger != null ? ledger : /^ktc/i.test(name)) ? 'landing' : null
+    }
     let ktcMeta = 0, fyiMeta = 0
     const mIdx = metaRows.findIndex((r: any[]) => r.some(c => String(c || '').trim() === 'Campaign') && r.some(c => String(c || '').startsWith('Spend')))
     if (mIdx >= 0) {
@@ -500,13 +559,33 @@ async function fetchRaw(): Promise<Raw> {
         const name = String(r[mNameCol] || '').trim()
         const spend = parseKrw(r[mSpendCol])
         if (!name || spend == null) continue
-        if (/^fyi/i.test(name)) { fyiMeta += spend; continue }
-        const ledger = ktcRecruitByKey[campaignKey(name)]
-        const isRecruit = ledger != null ? ledger : /^ktc/i.test(name)
-        if (isRecruit) ktcMeta += spend
+        const b = campaignBucket(name)
+        if (b === 'fyi') fyiMeta += spend
+        else if (b === 'landing') ktcMeta += spend
       }
     }
-    return { spendByChannel, postedByChannel, ktcMeta, fyiMeta }
+
+    // 광고비 일자 분해 (11. meta-raw-data) — 1행 = 하루 × 광고 1개. 캠페인 총액이 위 '캠페인별' 탭과
+    // 정확히 일치하는 원장이라(2026-07-30 실측 전 캠페인 일치) 같은 버킷 규칙으로 날짜만 붙이면 된다.
+    const adDays: CostData['adDays'] = { fyi: {}, landing: {} }
+    let adDayMax: string | null = null
+    const aIdx = adRawRows.findIndex((r: any[]) => r.some(c => String(c || '').trim() === 'Date') && r.some(c => String(c || '').trim() === 'Campaign Name'))
+    if (aIdx >= 0) {
+      const AH = adRawRows[aIdx]
+      const aDayCol = AH.findIndex((c: any) => String(c || '').trim() === 'Date')
+      const aNameCol = AH.findIndex((c: any) => String(c || '').trim() === 'Campaign Name')
+      const aSpendCol = AH.findIndex((c: any) => String(c || '').trim() === 'Spend')
+      for (const r of adRawRows.slice(aIdx + 1)) {
+        const day = String(r[aDayCol] || '').trim()
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue
+        if (!adDayMax || day > adDayMax) adDayMax = day // 버킷과 무관하게 "어디까지 반영됐나"
+        const spend = parseKrw(r[aSpendCol])
+        const b = campaignBucket(String(r[aNameCol] || '').trim())
+        if (!b || spend == null) continue
+        adDays[b][day] = (adDays[b][day] || 0) + spend
+      }
+    }
+    return { spendByChannel, postedByChannel, ktcMeta, fyiMeta, feeDays, adDays, adDayMax }
   }, null) : Promise.resolve<CostData | null>(null)
 
   // 출처 말풍선의 탭 링크 — 실패해도 나머지는 정상 (링크 없이 평문 표시)
@@ -553,10 +632,13 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // 30d 는 VN(UTC+7) 자정 경계로 오늘 포함 30일 — 롤링 컷(now-720h)이면 같은 VN 날짜의
   // 지원이 시각에 따라 반쪽만 들어가 일별 차트(30 VN일 창)와 숫자가 어긋난다.
   const start: number | null =
-    period === 'month' ? new Date(`${toVNMonth(new Date().toISOString())}-01T00:00:00+07:00`).getTime()
+    period === 'action' ? ACTION_MS
+    : period === 'month' ? new Date(`${toVNMonth(new Date().toISOString())}-01T00:00:00+07:00`).getTime()
     : period === '30d' ? new Date(`${toVNDay(new Date(Date.now() - 29 * 86400000).toISOString())}T00:00:00+07:00`).getTime()
     : null
   const inPeriod = (iso: string | null) => start == null || (iso != null && new Date(iso).getTime() >= start)
+  // 기간 시작일(VN 일자) — 비용을 날짜로 자를 때 쓴다 (예산 배분은 일자 단위)
+  const startDay: string | null = start == null ? null : toVNDay(new Date(start).toISOString())
 
   const fyiEmails = new Set(fyiApps.map(a => String(a.applicant_email).toLowerCase()))
 
@@ -704,7 +786,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   {
     const eraPeople: Record<string, number> = {}
     for (const at of Object.values(fyiFirstAt)) eraPeople[fyiEra(at)] = (eraPeople[fyiEra(at)] || 0) + 1
-    for (const key of ['FYI-jul', 'FYI-aug']) {
+    for (const key of ['FYI-pre', 'FYI-post']) {
       const c = chan[key] || (chan[key] = { key, people: 0, applications: 0, docPass: 0, interviews: 0, hires: 0, jobsPosted: null, spendFees: null, spendAds: null })
       c.people = Math.max(c.people, eraPeople[key] || 0)
     }
@@ -861,30 +943,50 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   const attributedHires = hires.filter(h => channelForEmailAll(h.email) || fpNames.has(normName(h.name)))
   const excludedHires = hires.length - attributedHires.length
 
-  // ── 비용 적용 (누적 전용) ──────────────────────────────────
+  // ── 비용 적용 (일자 기준 배분 — 2026-07-30) ──────────────────
+  // 예전엔 비용 원장에 시간 축이 없어 전액을 누적으로만 표시하고 기간 보기에서는 비웠다.
+  // 이제 광고비는 meta-raw-data(일별), 게재비는 인보이스 일자·LinkedIn 슬롯 시작일로 쪼개지므로
+  // 기간 보기에서도 그 창에 실제 집행된 금액만 센다.
+  // 누적 보기는 총액(정본)을 그대로 써서 일자 없는 기록이 있어도 합이 새지 않게 한다.
+  //  - FYI 두 시대 행: 광고비를 분리선(ACTION_DAY) 기준으로 나눠 각 행에 귀속.
+  //    누적 보기의 ~액션전 행 = 총액 − 액션 후 합 (일자 미상 금액은 옛 시대로 — 분리선 전 집행분이다)
   if (raw.cost) {
+    const { feeDays, adDays, adDayMax, spendByChannel, postedByChannel } = raw.cost
+    // 광고 원장은 며칠 늦게 채워진다 — 창이 통째로 반영일 뒤면 0(안 썼다)이 아니라 null(모른다).
+    // 이 구분이 없으면 갓 시작한 액션 구간이 "광고비 0원 · CPA 0원"으로 보인다.
+    const adSum = (m: Record<string, number>, from: string | null, to: string | null) =>
+      adDayMax != null && from != null && from > adDayMax ? null : sumDays(m, from, to)
     for (const c of Object.values(chan)) {
-      const fees = raw.cost.spendByChannel[c.key]
-      // FYI 광고비(FYI_* 캠페인 전액 — KTC 목적 무관, 07-30 대표 지시)는 비용 시트에 시간 축이
-      // 없어 일단 ~7월 행에 전액 누적 — 8월 마케팅 집행이 시작되면 비용 원장에 월 구분을 만들어
-      // 8월~ 행 몫을 분리해야 한다
-      const ads = c.key === 'landing-page' ? (raw.cost.ktcMeta || null) : c.key === 'FYI-jul' ? (raw.cost.fyiMeta || null) : null
+      const isPre = c.key === 'FYI-pre', isPost = c.key === 'FYI-post'
+      const fees = start == null
+        ? spendByChannel[c.key] ?? null
+        : feeDays[c.key]
+          ? sumDays(feeDays[c.key], startDay, null)
+          : spendByChannel[c.key] === 0 ? 0 : null // 일자 축이 없는데 지출이 있는 채널은 기간 배분 불가
+      const ads =
+        c.key === 'landing-page' ? (start == null ? raw.cost.ktcMeta : adSum(adDays.landing, startDay, null))
+        : isPost ? adSum(adDays.fyi, laterDay(startDay, ACTION_DAY), null)
+        : isPre ? (start == null
+            ? raw.cost.fyiMeta - sumDays(adDays.fyi, ACTION_DAY, null)
+            : adSum(adDays.fyi, startDay, ACTION_PREV_DAY))
+        : null
       if (fees != null || ads != null) {
         c.spendFees = fees ?? 0
         c.spendAds = ads ?? 0
       }
-      if (raw.cost.postedByChannel[c.key] != null) c.jobsPosted = raw.cost.postedByChannel[c.key]
+      if (postedByChannel[c.key] != null) c.jobsPosted = postedByChannel[c.key]
     }
   }
 
   // ── 채널 목록 완성 (전 지표 0인 채널은 제외) ────────────────
-  // 비용 시트는 시간 축이 없어 기간 보기에서는 비용 열을 비운다
   const channels: Channel[] = Object.values(chan)
-    // FYI 두 시대 행은 0이어도 표시 — 8월~ 행이 새로 시작하는 구조 자체가 정보다
-    .filter(c => c.key.startsWith('FYI') || c.people + c.applications + c.docPass + c.interviews + c.hires > 0)
+    // FYI 두 시대 행은 0이어도 표시 — 액션 후 행이 0에서 새로 시작하는 구조 자체가 정보다.
+    // 단 창이 통째로 분리선 뒤면(7/28~ 보기) 옛 시대 행은 창 밖이라 뺀다.
+    .filter(c => (c.key === 'FYI-pre' && startDay != null && startDay >= ACTION_DAY ? false
+      : c.key.startsWith('FYI') || c.people + c.applications + c.docPass + c.interviews + c.hires > 0))
     .map(c => {
-      const fees = start == null ? c.spendFees : null
-      const ads = start == null ? c.spendAds : null
+      const fees = c.spendFees
+      const ads = c.spendAds
       const spendKrw = fees != null || ads != null ? (fees ?? 0) + (ads ?? 0) : null
       return {
         key: c.key, people: c.people, applications: c.applications, docPass: c.docPass,
@@ -1027,7 +1129,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   const hiresInOpen = openJds.reduce((s, j) => s + j.hiresAll, 0)
 
   // ── 성과 ──────────────────────────────────────────────────
-  // 총 지출은 헤드라인(누적)용이라 기간 필터와 무관하게 원본 chan 값으로 계산
+  // 총 지출 = 채널 행 합 (기간 보기에서는 그 기간에 집행된 금액만 — 2026-07-30 일자 배분 도입)
   const rawChans = Object.values(chan)
   const totalSpendKrw = rawChans.some(c => c.spendFees != null || c.spendAds != null)
     ? rawChans.reduce((s, c) => s + (c.spendFees ?? 0) + (c.spendAds ?? 0), 0)
@@ -1075,6 +1177,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     mode: 'live',
     warnings: raw.warnings,
     sheetLinks: raw.sheetLinks,
+    spendAsOf: raw.cost?.adDayMax ?? null,
     headline: {
       hiresTotal: finalPassedAll,
       hiresInPeriod,
@@ -1084,7 +1187,12 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       revenueUsd: attributedHires.reduce((s, h) => s + h.revenue, 0),
       profitUsd: attributedHires.reduce((s, h) => s + h.profit, 0),
       totalSpendKrw,
-      costPerHireKrw: totalSpendKrw != null && finalPassedAll > 0 ? totalSpendKrw / finalPassedAll : null,
+      // 채용당 비용 = 그 기간 지출 ÷ 그 기간 입사(입사일 기준). 누적 보기는 전체 ÷ 전체.
+      // 지출 0 은 대개 "아직 원장에 안 들어옴"이라 0원으로 단정하지 않는다.
+      costPerHireKrw: (() => {
+        const hires = start == null ? finalPassedAll : hiresInPeriod ?? 0
+        return totalSpendKrw ? (hires > 0 ? totalSpendKrw / hires : null) : null
+      })(),
     },
     supply: {
       talentPoolResume: raw.resumeCount,
@@ -1139,13 +1247,14 @@ const getCachedByPeriod = unstable_cache(
     const at = raw.fetchedAt
     return {
       all: computeFromRaw(raw, 'all', at),
+      action: computeFromRaw(raw, 'action', at),
       month: computeFromRaw(raw, 'month', at),
       '30d': computeFromRaw(raw, '30d', at),
     }
   },
   // v15·v21·v22 는 별도 세션(점검 탭 / feat/audit-check-tab 브랜치)이 선점해 건너뜀 —
   // Data Cache 는 배포로 안 비워지므로 같은 키를 쓰면 MasterData 모양이 다른 옛 스냅숏이 되돌아온다
-  ['staffing-master-data-v23'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v24'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

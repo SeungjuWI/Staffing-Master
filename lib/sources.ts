@@ -124,8 +124,9 @@ const SRC_DEFS = {
       { k: 'sheet', sys: '비용 시트 › LINKEDIN 탭', loc: '— KTC 공고코드 슬롯 비용만 합산', sheet: 'cost', tab: 'LINKEDIN' },
       { k: 'sheet', sys: '비용 시트 › 캠페인별 Meta 광고 탭', loc: '— Spend 열 (랜딩 = KTC 채용 캠페인, FYI = FYI_* 캠페인)', sheet: 'cost', tab: '캠페인별' },
       { k: 'sheet', sys: '비용 시트 › meta-campaign-summary 탭', loc: "— 캠페인의 채용 목적 여부('Recruiting for KTC') 원장", sheet: 'cost', tab: 'campaign-summary' },
+      { k: 'sheet', sys: '비용 시트 › meta-raw-data 탭', loc: '— 광고비 일자 분해 (Date × Campaign × Spend, 캠페인 총액은 위 탭과 일치)', sheet: 'cost', tab: 'raw-data' },
     ],
-    note: '비용 시트에 시간 축이 없어 항상 누적 — 기간 보기에서는 비움',
+    note: '기간 보기는 그 기간에 집행된 금액만 — 광고비는 일별, 게재비는 인보이스 일자(패키지는 결제일 전액), LinkedIn 은 슬롯 게재 시작일 기준. 누적 보기는 일자 없는 기록까지 포함한 총액',
   },
   'ch.cpa': {
     lines: [{ k: 'calc', sys: '지출 ÷ 지원자', loc: '— 그 행의 두 열 그대로 나눈 값' }],

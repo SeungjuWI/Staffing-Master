@@ -42,6 +42,19 @@ export function fmtSinceMonth(d: string): string {
   return `${y}년 ${mo}월`
 }
 
+// ── 액션 분리선 ─────────────────────────────────────────────
+// 2026-07-28 — FYI 가짜 공고 정리와 KTC 집중 집행이 이날부터 시작됐다.
+// 원래 8/1(월 경계)로 나눴지만 실제 액션은 7/28 이라 7/28~31 성과가 옛 시대에 섞여 들어갔다
+// → 월 경계를 버리고 일자 경계로 교체 (2026-07-30 대표 지시).
+// 집계(lib/aggregate.ts)·채널 라벨·기간 필터·비용 배분이 전부 이 상수 하나를 본다.
+export const ACTION_DAY = '2026-07-28'
+export const prevDay = (d: string) =>
+  new Date(new Date(`${d}T00:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10)
+// 'YYYY-MM-DD' → '7/28' (라벨용 축약)
+export const fmtSlashDay = (d: string) => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`
+export const ACTION_LABEL = fmtSlashDay(ACTION_DAY) // '7/28'
+export const ACTION_PREV_LABEL = fmtSlashDay(prevDay(ACTION_DAY)) // '7/27'
+
 // 절대 시각 표기는 베트남 시간(ICT) 고정 + 라벨 — 대시보드·ATS 와 같은 기준 (스태핑 표준)
 export function fmtDateTime(iso: string): string {
   const d = new Date(iso)
@@ -58,9 +71,10 @@ const CHANNEL_LABELS: Record<string, string> = {
   glint: 'Glints',
   'landing-page': '랜딩페이지',
   FYI: 'FYI (자체 플랫폼)', // 시대 분리 전 키 — 공고 상세 도넛 등 시대 무관 표기용
-  // FYI 시대 분리 (2026-07-29 회의): 7월까지는 KTC 외 공고가 섞인 혼합 집계, 8월부터 KTC 공고만
-  'FYI-jul': 'FYI ~7월',
-  'FYI-aug': 'FYI 8월~',
+  // FYI 시대 분리 (2026-07-29 회의 · 07-30 일자 경계로 교체):
+  // 액션 전은 KTC 외 공고가 섞인 혼합 집계, 액션 후는 KTC 공고만 남긴 새 집계
+  'FYI-pre': `FYI ~${ACTION_PREV_LABEL}`,
+  'FYI-post': `FYI ${ACTION_LABEL}~`,
   LinkedIn: 'LinkedIn',
   YBOX: 'YBOX',
   Vieclam24h: 'Vieclam24h',
@@ -79,8 +93,8 @@ const CHANNEL_KIND: Record<string, 'paid' | 'own' | 'free'> = {
   'top-dev': 'paid',
   LinkedIn: 'paid',
   FYI: 'own',
-  'FYI-jul': 'own',
-  'FYI-aug': 'own',
+  'FYI-pre': 'own',
+  'FYI-post': 'own',
   'landing-page': 'own',
   'jobs-go': 'free',
   'top-cv': 'free',

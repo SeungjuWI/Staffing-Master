@@ -95,6 +95,9 @@ export type MasterData = {
   // 출처 말풍선의 시트 링크 — 키 `<시트키>|<탭이름>` → 그 탭 URL (lib/sources.ts srcHref 가 해석).
   // 크레덴셜이 없거나 조회 실패면 빈 객체 → 링크 없이 평문으로만 표시된다.
   sheetLinks: Record<string, string>
+  // 광고비 원장(meta-raw-data)이 반영된 마지막 날짜 (YYYY-MM-DD).
+  // 이 날짜 뒤 구간의 광고비 0 은 "안 썼다"가 아니라 "아직 시트에 안 들어왔다" — 화면에 각주로 표기한다.
+  spendAsOf: string | null
 
   headline: {
     hiresTotal: number          // 입사 누적 (Ops Employee)

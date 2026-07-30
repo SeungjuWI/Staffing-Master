@@ -1,6 +1,6 @@
 import { Suspense, cache } from 'react'
 import { getMasterData, type Period } from '@/lib/aggregate'
-import { fmtDateTime, fmtInt, fmtKrw, fmtPct, fmtSinceMonth, fmtUsd } from '@/lib/fmt'
+import { ACTION_LABEL, ACTION_PREV_LABEL, fmtDateTime, fmtDay, fmtInt, fmtKrw, fmtPct, fmtSinceMonth, fmtUsd } from '@/lib/fmt'
 import { Funnel, MonthlyBars, StatTile } from '@/components/viz'
 import { SrcLinkProvider, SrcTip } from '@/components/src-tip'
 import { ChannelHealthSummary, ChannelTable, CompanyTable, JdHealthSummary } from '@/components/tables'
@@ -22,8 +22,10 @@ const TABS = [
 ] as const
 type TabKey = (typeof TABS)[number]['key']
 
+// '7/28~' = 액션 분리선 이후 (FYI 정리·KTC 집중 집행 시작일) — 월 경계로는 안 잡히는 창
 const PERIODS: { key: Period; label: string }[] = [
   { key: 'all', label: '누적' },
+  { key: 'action', label: `${ACTION_LABEL}~` },
   { key: 'month', label: '이번 달' },
   { key: '30d', label: '최근 30일' },
 ]
@@ -151,8 +153,10 @@ async function Dashboard({
       {filtered && (
         <div className="periodnote">
           <b>{PERIODS.find(p => p.key === period)!.label}</b> 보기 — 기간 적용: 지원·지원자·퍼널(이 기간
-          지원자의 현재 도달 단계)·공고 표 숫자·베트남 지원, 입사는 입사일 기준 · 항상 누적: 재직·매출·비용·인재풀·
+          지원자의 현재 도달 단계)·공고 표 숫자·베트남 지원, 입사는 입사일 기준, <b>비용은 이 기간에 집행된 금액</b>
+          (광고비 일별 · 게재비 인보이스 일자 기준) · 항상 누적: 재직·매출·인재풀·
           &lsquo;지금 진행 중&rsquo;(현재 상태)·공고 판정·충원율
+          {data.spendAsOf && <> · 광고비 원장 반영일 {fmtDay(data.spendAsOf)}까지</>}
         </div>
       )}
 
@@ -198,7 +202,7 @@ async function Dashboard({
                   </div>
                 </div>
                 <div className="kv">
-                  <div className="k">채용 1명당 마케팅 비용{filtered && ' (누적)'}</div>
+                  <div className="k">채용 1명당 마케팅 비용{filtered && ' (이 기간 집행분)'}</div>
                   <div className="v">
                     {h.costPerHireKrw != null ? fmtKrw(h.costPerHireKrw) : '–'}{' '}
                     <span className="dim">지출 {fmtKrw(h.totalSpendKrw)}</span>
@@ -472,11 +476,16 @@ async function Dashboard({
               <span className="sub">
                 성과순 · <span className="ck paid">유료</span> 게재비·광고 집행{' '}
                 <span className="ck own">자사</span> 우리 플랫폼 <span className="ck free">무료</span> 무료 게재
+                {data.spendAsOf && (
+                  <>
+                    {' · '}광고비는 {fmtDay(data.spendAsOf)}까지 반영 (그 뒤 집행분은 비용 시트 갱신 후)
+                  </>
+                )}
               </span>
               <ChannelHealthSummary channels={supply.channels} />
             </div>
             <div className="card">
-              <ChannelTable channels={supply.channels} />
+              <ChannelTable channels={supply.channels} spendAsOf={data.spendAsOf} />
             </div>
           </section>
 
@@ -588,9 +597,16 @@ async function Dashboard({
               <div>
                 <dt>기간 보기</dt>
                 <dd>
-                  이번 달/최근 30일에서 기간이 적용되는 지표: 지원·지원자·퍼널(그 기간 지원자의 현재 도달 단계)·공고
-                  표 숫자·베트남 지원, 그리고 입사(입사일 기준). 재직·매출·비용·인재풀·진행 중 인원·공고 판정·충원율은
-                  시간 축이 없거나 현재 상태라 항상 누적
+                  {ACTION_LABEL}~ / 이번 달 / 최근 30일에서 기간이 적용되는 지표: 지원·지원자·퍼널(그 기간 지원자의
+                  현재 도달 단계)·공고 표 숫자·베트남 지원, 입사(입사일 기준), <b>비용(그 기간에 집행된 금액)</b>.
+                  재직·매출·인재풀·진행 중 인원·공고 판정·충원율은 시간 축이 없거나 현재 상태라 항상 누적
+                </dd>
+              </div>
+              <div>
+                <dt>{ACTION_LABEL}~ (액션 분리선)</dt>
+                <dd>
+                  FYI 가짜 공고 정리와 KTC 집중 집행을 시작한 날 이후만 보는 창 — 월 단위로 끊으면 이 액션이
+                  7월 숫자에 섞여 성과가 보이지 않아 일자 기준으로 나눈다
                 </dd>
               </div>
               <div>
@@ -616,7 +632,7 @@ async function Dashboard({
                 <dt>채널 판정</dt>
                 <dd>
                   성과 = 입사 발생, 채용당 비용 정상 · 고비용 = 입사는 있지만 채용당 비용이 전체 평균의 3배 이상 ·
-                  점검 = 지출 있는데 입사 0 · 관망 = 지출·입사 모두 0 — 비용 데이터가 없는 기간 보기에서는 표시 안 함
+                  점검 = 지출 있는데 입사 0 · 관망 = 지출·입사 모두 0 (기간 보기에서는 그 기간 집행분 기준으로 판정)
                 </dd>
               </div>
               <div>
@@ -624,12 +640,12 @@ async function Dashboard({
                 <dd>지금은 쓰지 않는 유입 경로 (구 시트·구글폼·채널 미상 등) — 채널 표 맨 아래 '과거' 칩으로 구분, 판정 제외</dd>
               </div>
               <div>
-                <dt>FYI ~7월 / 8월~</dt>
+                <dt>FYI ~{ACTION_PREV_LABEL} / {ACTION_LABEL}~</dt>
                 <dd>
-                  FYI 채널을 2026년 8월 1일 기준으로 나눈 두 행 — 7월까지는 FYI 에 KTC 외 공고가 섞여 있어
-                  지원 숫자가 혼합 집계였고, <b>8월부터는 KTC 공고만 남겨</b> 마케팅비 대비 성과를 그대로 읽는다.
-                  지원자는 최초 지원 시점 기준으로 한쪽 행에만 귀속. 비용 시트에는 시간 축이 없어 FYI 지출은
-                  당분간 ~7월 행에 누적 표기 (8월 집행 시작 시 비용 원장에 월 구분 필요)
+                  FYI 채널을 <b>액션 분리선({ACTION_LABEL})</b> 기준으로 나눈 두 행 — 그 전까지는 FYI 에 KTC 외
+                  공고가 섞여 있어 지원 숫자가 혼합 집계였고, <b>{ACTION_LABEL}부터는 KTC 공고만 남겨</b> 마케팅비
+                  대비 성과를 그대로 읽는다. 지원자는 최초 지원 시점 기준으로 한쪽 행에만 귀속하고, 광고비도
+                  집행 날짜로 나눠 각 행에 붙는다 (원래 8/1 월 경계였으나 실제 액션이 {ACTION_LABEL}이라 일자 경계로 교체)
                 </dd>
               </div>
               <div>
