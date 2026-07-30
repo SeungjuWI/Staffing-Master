@@ -23,8 +23,9 @@ export function mockData(): MasterData {
       candidatesTotal: 1246,
       applicationsTotal: 1893,
       channels: [
+        { key: 'FYI-aug', people: 0, applications: 0, docPass: 0, interviews: 0, hires: 0, jobsPosted: null, spendFees: null, spendAds: null, spendKrw: null, cpaKrw: null, costPerHireKrw: null },
+        { key: 'FYI-jul', people: 288, applications: 402, docPass: 74, interviews: 12, hires: 4, jobsPosted: null, spendFees: 0, spendAds: 1800000, spendKrw: 1800000, cpaKrw: 6250, costPerHireKrw: 450000 },
         { key: 'ITviec-api', people: 412, applications: 655, docPass: 118, interviews: 21, hires: 6, jobsPosted: 12, spendFees: 5200000, spendAds: 0, spendKrw: 5200000, cpaKrw: 12621, costPerHireKrw: 866667 },
-        { key: 'FYI', people: 288, applications: 402, docPass: 74, interviews: 12, hires: 4, jobsPosted: null, spendFees: 0, spendAds: 1800000, spendKrw: 1800000, cpaKrw: 6250, costPerHireKrw: 450000 },
         { key: 'LinkedIn', people: 231, applications: 344, docPass: 61, interviews: 11, hires: 3, jobsPosted: 8, spendFees: 3600000, spendAds: 0, spendKrw: 3600000, cpaKrw: 15584, costPerHireKrw: 1200000 },
         { key: 'landing-page', people: 154, applications: 260, docPass: 38, interviews: 8, hires: 2, jobsPosted: null, spendFees: 0, spendAds: 2400000, spendKrw: 2400000, cpaKrw: 15584, costPerHireKrw: 1200000 },
         { key: 'top-dev', people: 96, applications: 141, docPass: 22, interviews: 4, hires: 1, jobsPosted: 6, spendFees: 1200000, spendAds: 0, spendKrw: 1200000, cpaKrw: 12500, costPerHireKrw: 1200000 },
@@ -37,6 +38,18 @@ export function mockData(): MasterData {
         { month: '2026-03', count: 204 }, { month: '2026-04', count: 188 }, { month: '2026-05', count: 231 },
         { month: '2026-06', count: 259 }, { month: '2026-07', count: 217 },
       ],
+      daily: Array.from({ length: 30 }, (_, i) => {
+        const d = new Date(Date.now() + 7 * 3600000 - (29 - i) * 86400000) // VN(UTC+7) 날짜 축
+        const wave = (base: number, amp: number, phase: number) =>
+          Math.max(0, Math.round(base + amp * Math.sin((i + phase) / 3) + (i % 7 === 0 ? -base * 0.6 : 0)))
+        return {
+          date: d.toISOString().slice(0, 10),
+          byChannel: {
+            'landing-page': wave(9, 4, 0), 'ITviec-api': wave(7, 3, 2), 'top-dev': wave(3, 2, 4),
+            FYI: wave(4, 2, 1), 'jobs-go': wave(2, 1, 5), LinkedIn: wave(1, 1, 3),
+          },
+        }
+      }),
     },
     matching: {
       funnel: [

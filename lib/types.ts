@@ -66,6 +66,10 @@ export type FunnelStage = {
 
 export type MonthPoint = { month: string; count: number }
 
+// 일별 채널 추이 한 점 — date 는 VN(UTC+7) 기준 YYYY-MM-DD, byChannel 키는 sheet_source
+// (it-viec-manual 은 ITviec-api 로 합산, FYI 직접 지원은 'FYI')
+export type DayPoint = { date: string; byChannel: Record<string, number> }
+
 export type CompanyPerf = {
   company: string
   hires: number
@@ -108,6 +112,7 @@ export type MasterData = {
     applicationsTotal: number   // 지원 건 (전 채널)
     channels: Channel[]
     monthly: MonthPoint[]       // 월별 지원 건 추이
+    daily: DayPoint[]           // 일별 채널별 지원 건 (최근 30일, 기간 필터 무관)
   }
 
   matching: {

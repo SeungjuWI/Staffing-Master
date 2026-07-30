@@ -6,8 +6,8 @@ export async function middleware(req: NextRequest) {
   if (!pass) return NextResponse.next() // 미설정 = 잠금 없음 (로컬 개발)
 
   const { pathname } = req.nextUrl
-  // /api/health 는 크론 호출용 — 쿠키 대신 자체 CRON_SECRET 검증
-  if (pathname.startsWith('/login') || pathname.startsWith('/api/login') || pathname.startsWith('/api/health')) {
+  // /api/health · /api/recruit-alert 는 크론 호출용 — 쿠키 대신 자체 CRON_SECRET 검증
+  if (pathname.startsWith('/login') || pathname.startsWith('/api/login') || pathname.startsWith('/api/health') || pathname.startsWith('/api/recruit-alert')) {
     return NextResponse.next()
   }
   if (req.cookies.get(AUTH_COOKIE)?.value === (await authHash(pass))) {

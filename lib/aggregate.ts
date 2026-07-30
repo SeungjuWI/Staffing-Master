@@ -18,7 +18,7 @@
 
 import { unstable_cache } from 'next/cache'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
-import type { Channel, CompanyPerf, FunnelStage, JdRow, MasterData, MonthPoint, VietnamBlock } from './types'
+import type { Channel, CompanyPerf, DayPoint, FunnelStage, JdRow, MasterData, MonthPoint, VietnamBlock } from './types'
 import { mockData } from './mock'
 import { buildAudit } from './audit'
 
@@ -46,6 +46,13 @@ const COST_CHANNEL_MAP: Record<string, string> = {
   topdev: 'top-dev', itviec: 'ITviec-api', ybox: 'YBOX',
   glints: 'glint', linkedin: 'LinkedIn', jobsgo: 'jobs-go', topcv: 'top-cv',
 }
+
+// 채널 표 합산 — it-viec-manual 탭은 같은 사이트(ITviec)의 수기 탭인데, 파이프라인 동기화가
+// 이 탭을 안 읽어 지원자~입사가 전부 0인 유령 행으로 떴고 비용도 매핑상 ITviec-api 행에만
+// 붙는다 → 한 행으로 합산 (공고 표 CH_SITE 와 같은 원칙, 2026-07-29 대표 지시).
+// 동기화가 이 탭을 수집하기 시작해도 같은 사이트라 합산이 맞다.
+const CHANNEL_MERGE: Record<string, string> = { 'it-viec-manual': 'ITviec-api' }
+const mergedChannel = (src: string) => CHANNEL_MERGE[src] || src
 const costChannelKey = (s: unknown) =>
   COST_CHANNEL_MAP[String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')]
 
@@ -96,8 +103,16 @@ const EARLY_DAYS = 7 // 모집 시작 1주 미만은 판정 유예 (모집 초�
 // 무반응 공고의 모집 주차가 2~4주와 8~12주로 갈라져(중간 공백) 6주를 경계로 삼음 (2026-07-28)
 const NO_RESPONSE_DAYS = 42
 
-// VN(UTC+7) 기준 YYYY-MM
+// VN(UTC+7) 기준 YYYY-MM / YYYY-MM-DD
 const toVNMonth = (iso: string) => new Date(new Date(iso).getTime() + 7 * 3600000).toISOString().slice(0, 7)
+const toVNDay = (iso: string) => new Date(new Date(iso).getTime() + 7 * 3600000).toISOString().slice(0, 10)
+const DAILY_WINDOW = 30 // 일별 채널 추이 창 (오늘 포함 최근 30일)
+
+// FYI 채널 시대 분리 (2026-07-29 회의) — 8월부터 FYI 에는 KTC 공고만 남긴다(가짜 공고 정리).
+// 7월까지는 KTC 외 공고 지원이 섞인 혼합 숫자라, 채널 표에서 ~7월 / 8월~ 두 행으로 나눠 본다.
+// 날짜 없는 기록은 분리선(8/1) 이전 데이터일 수밖에 없어 ~7월로 귀속.
+const FYI_CLEAN_MS = new Date('2026-08-01T00:00:00+07:00').getTime()
+const fyiEra = (iso: string | null) => (iso && new Date(iso).getTime() >= FYI_CLEAN_MS ? 'FYI-aug' : 'FYI-jul')
 
 // 월별 카운트 맵 → 연속 월 축 (파싱 오류로 생긴 미래 월 제거, 빈 월 0 채움, 최대 12개월)
 function toMonthSeries(byMonth: Record<string, number>, nowMonth: string): MonthPoint[] {
@@ -214,7 +229,7 @@ type CostData = {
   spendByChannel: Record<string, number>
   postedByChannel: Record<string, number>
   ktcMeta: number
-  fyiKtcMeta: number
+  fyiMeta: number
 }
 
 type Raw = {
@@ -430,10 +445,12 @@ async function fetchRaw(): Promise<Raw> {
         }
       }
     }
-    // Meta 광고비 분해 — 채용 마케팅비 포함 여부의 진실 원천은 12. meta-campaign-summary 탭의
-    // 'Recruiting for KTC'(yes/no) 열 (2026-07-28 Alice 확인: 행사 캠페인 Mentoring·Hackathon·July-Event
-    // 는 KTC 지원자 모집 목적 = 포함, Launch-App 앱 설치는 제외). 원장에 아직 없는 신규 캠페인은
-    // 이름 규칙(KTC* 또는 FYI_*KTC*)으로 폴백. 채널 배분은 이름 접두: FYI_* = FYI 경유, 그 외 = 랜딩.
+    // Meta 광고비 분해 (2. 캠페인별 Meta 광고 성과 탭) — 채널 배분은 이름 접두: FYI_* = FYI, 그 외 = 랜딩.
+    // FYI_* 캠페인은 KTC 모집 목적 여부 무관 전액 합산 (2026-07-30 대표 지시 "FYI로 쳐진 거 다 넣어") —
+    // ~7월 FYI 행 자체가 KTC 외 공고가 섞인 혼합 집계라 비용도 FYI 광고비 전액이 짝이 맞는다.
+    // 랜딩 몫만 채용 목적 필터: 진실 원천은 12. meta-campaign-summary 탭의 'Recruiting for KTC'(yes/no) 열
+    // (2026-07-28 Alice 확인: Mentoring·Hackathon·July-Event 포함, Launch-App 앱 설치는 제외),
+    // 원장에 아직 없는 신규 캠페인은 이름 규칙(KTC*)으로 폴백.
     // 캠페인명이 탭마다 달라(…_MT-lead_·_bud:aso 접미 유무) "앞 두 세그먼트 + 최장 숫자열" 키로 맞춘다.
     const campaignKey = (s: string) => {
       const segs = s.split('_').map(x => x.toLowerCase().replace(/[^a-z0-9]/g, ''))
@@ -453,7 +470,7 @@ async function fetchRaw(): Promise<Raw> {
         ktcRecruitByKey[campaignKey(name)] = flag === 'yes'
       }
     }
-    let ktcMeta = 0, fyiKtcMeta = 0
+    let ktcMeta = 0, fyiMeta = 0
     const mIdx = metaRows.findIndex((r: any[]) => r.some(c => String(c || '').trim() === 'Campaign') && r.some(c => String(c || '').startsWith('Spend')))
     if (mIdx >= 0) {
       const MH = metaRows[mIdx]
@@ -463,14 +480,13 @@ async function fetchRaw(): Promise<Raw> {
         const name = String(r[mNameCol] || '').trim()
         const spend = parseKrw(r[mSpendCol])
         if (!name || spend == null) continue
+        if (/^fyi/i.test(name)) { fyiMeta += spend; continue }
         const ledger = ktcRecruitByKey[campaignKey(name)]
-        const isRecruit = ledger != null ? ledger : /^ktc/i.test(name) || (/^fyi/i.test(name) && /ktc/i.test(name))
-        if (!isRecruit) continue
-        if (/^fyi/i.test(name)) fyiKtcMeta += spend
-        else ktcMeta += spend
+        const isRecruit = ledger != null ? ledger : /^ktc/i.test(name)
+        if (isRecruit) ktcMeta += spend
       }
     }
-    return { spendByChannel, postedByChannel, ktcMeta, fyiKtcMeta }
+    return { spendByChannel, postedByChannel, ktcMeta, fyiMeta }
   }, null) : Promise.resolve<CostData | null>(null)
 
   // 위에서 띄운 promise 를 전부 한 번에 대기 (콜드 fetch = 가장 느린 1개 시간)
@@ -511,9 +527,11 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
 
   // 기간 필터 — "지원일 코호트": 해당 기간에 지원한 인재의 현재 도달 단계.
   // 스톡 지표(입사 누적·재직·매출·인재풀·오픈 공고)와 비용(시간 축 없음)은 항상 누적.
+  // 30d 는 VN(UTC+7) 자정 경계로 오늘 포함 30일 — 롤링 컷(now-720h)이면 같은 VN 날짜의
+  // 지원이 시각에 따라 반쪽만 들어가 일별 차트(30 VN일 창)와 숫자가 어긋난다.
   const start: number | null =
     period === 'month' ? new Date(`${toVNMonth(new Date().toISOString())}-01T00:00:00+07:00`).getTime()
-    : period === '30d' ? Date.now() - 30 * 86400000
+    : period === '30d' ? new Date(`${toVNDay(new Date(Date.now() - 29 * 86400000).toISOString())}T00:00:00+07:00`).getTime()
     : null
   const inPeriod = (iso: string | null) => start == null || (iso != null && new Date(iso).getTime() >= start)
 
@@ -617,9 +635,14 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     ? candidates
     : candidates.filter(c => inPeriod(parseAppliedAt(c.applied_date, c.sheet_source)))
   const cohortEmails = new Set(periodCandidates.map(c => String(c.email || '').toLowerCase()).filter(Boolean))
-  const fyiEmailsPeriod = start == null
-    ? fyiEmails
-    : new Set(fyiApps.filter(a => inPeriod(a.created_at)).map(a => String(a.applicant_email).toLowerCase()))
+  // FYI 지원자(고유 이메일)는 최초 지원 시각의 시대(~7월/8월~)로 귀속 — 두 행 이중 계상 방지
+  const fyiFirstAt: Record<string, string> = {}
+  for (const a of fyiApps) {
+    if (!inPeriod(a.created_at)) continue
+    const e = String(a.applicant_email).toLowerCase()
+    const at = String(a.created_at || '')
+    if (!fyiFirstAt[e] || (at && at < fyiFirstAt[e])) fyiFirstAt[e] = at
+  }
 
   const chan: Record<string, ChanAcc> = {}
   const bump = (key: string, field: 'people' | 'applications' | 'docPass' | 'interviews' | 'hires') => {
@@ -631,7 +654,9 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   let screenPass = 0, delivered = 0, interviewPipe = 0, offerReached = 0, finalPassed = 0
 
   for (const c of periodCandidates) {
-    const ch = c.sheet_source || '(미상)'
+    const src = c.sheet_source || '(미상)'
+    // FYI 유입은 지원 시점 기준으로 ~7월/8월~ 행에 귀속 (공고별 귀속은 시대 무관 그대로)
+    const ch = src === 'FYI' ? fyiEra(parseAppliedAt(c.applied_date, src)) : mergedChannel(src)
     const code = codeForCandidate(c)
     const st = c.pipeline_status || 'new'
     bump(ch, 'people')
@@ -651,18 +676,34 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     }
   }
 
-  // FYI 채널 지원자는 salarymap 라이브가 정답 (파이프라인 유입분보다 넓다)
-  if (fyiEmailsPeriod.size) {
-    const c = chan.FYI || (chan.FYI = { key: 'FYI', people: 0, applications: 0, docPass: 0, interviews: 0, hires: 0, jobsPosted: null, spendFees: null, spendAds: null })
-    c.people = Math.max(c.people, fyiEmailsPeriod.size)
+  // FYI 채널 지원자는 salarymap 라이브가 정답 (파이프라인 유입분보다 넓다).
+  // 두 시대 행은 데이터가 없어도 항상 만든다 — 8월~ 행이 0에서 새로 시작함을 화면에서 보여주기 위함.
+  {
+    const eraPeople: Record<string, number> = {}
+    for (const at of Object.values(fyiFirstAt)) eraPeople[fyiEra(at)] = (eraPeople[fyiEra(at)] || 0) + 1
+    for (const key of ['FYI-jul', 'FYI-aug']) {
+      const c = chan[key] || (chan[key] = { key, people: 0, applications: 0, docPass: 0, interviews: 0, hires: 0, jobsPosted: null, spendFees: null, spendAds: null })
+      c.people = Math.max(c.people, eraPeople[key] || 0)
+    }
   }
 
   // ── 지원 건 (ktc_applications + FYI 라이브) ────────────────
   // 월별 추이는 기간 필터와 무관하게 전체 시계열 유지
   const monthly: Record<string, number> = {}
+  // 일별 채널 추이 (최근 30일) — 월별과 같은 원칙으로 기간 필터 무관
+  const dayFloor = toVNDay(new Date(fetchedAt - (DAILY_WINDOW - 1) * 86400000).toISOString())
+  const dayCap = toVNDay(new Date(fetchedAt).toISOString())
+  const dailyMap: Record<string, Record<string, number>> = {}
+  const bumpDay = (iso: string | null, ch: string) => {
+    if (!iso) return
+    const d = toVNDay(iso)
+    if (d < dayFloor || d > dayCap) return
+    ;(dailyMap[d] = dailyMap[d] || {})[ch] = (dailyMap[d][ch] || 0) + 1
+  }
   let applicationsTotal = 0
   for (const a of applications) {
     if (a.applied_at) monthly[toVNMonth(a.applied_at)] = (monthly[toVNMonth(a.applied_at)] || 0) + 1
+    bumpDay(a.applied_at, mergedChannel(a.sheet_source || '(미상)'))
     if (a.job_code) {
       const j = jdAll(a.job_code)
       j.apps++ // 스톡 지원 건 — 지원 부족 판정 재료 (기간 필터 무관)
@@ -670,7 +711,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       if (a.applied_at && a.applied_at <= lastAppCap && (!j.lastApp || a.applied_at > j.lastApp)) j.lastApp = a.applied_at
     }
     if (!inPeriod(a.applied_at)) continue
-    bump(a.sheet_source || '(미상)', 'applications')
+    // 시트 경로엔 FYI 탭이 없지만(스킵), DB 폴백엔 있을 수 있어 여기도 시대 행으로 귀속
+    bump(a.sheet_source === 'FYI' ? fyiEra(a.applied_at) : mergedChannel(a.sheet_source || '(미상)'), 'applications')
     applicationsTotal++
     if (a.job_code) {
       const j = jd(a.job_code)
@@ -726,6 +768,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   }
   for (const a of fyiApps) {
     if (a.created_at) monthly[toVNMonth(a.created_at)] = (monthly[toVNMonth(a.created_at)] || 0) + 1
+    bumpDay(a.created_at, 'FYI')
     const code = fyiCodeForJob(a.job_id)
     if (code) {
       const j = jdAll(code)
@@ -734,7 +777,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       if (a.created_at && a.created_at <= lastAppCap && (!j.lastApp || a.created_at > j.lastApp)) j.lastApp = a.created_at
     }
     if (!inPeriod(a.created_at)) continue
-    bump('FYI', 'applications')
+    bump(fyiEra(a.created_at), 'applications')
     applicationsTotal++
     if (code) {
       const j = jd(code)
@@ -799,7 +842,10 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   if (raw.cost) {
     for (const c of Object.values(chan)) {
       const fees = raw.cost.spendByChannel[c.key]
-      const ads = c.key === 'landing-page' ? (raw.cost.ktcMeta || null) : c.key === 'FYI' ? (raw.cost.fyiKtcMeta || null) : null
+      // FYI 광고비(FYI_* 캠페인 전액 — KTC 목적 무관, 07-30 대표 지시)는 비용 시트에 시간 축이
+      // 없어 일단 ~7월 행에 전액 누적 — 8월 마케팅 집행이 시작되면 비용 원장에 월 구분을 만들어
+      // 8월~ 행 몫을 분리해야 한다
+      const ads = c.key === 'landing-page' ? (raw.cost.ktcMeta || null) : c.key === 'FYI-jul' ? (raw.cost.fyiMeta || null) : null
       if (fees != null || ads != null) {
         c.spendFees = fees ?? 0
         c.spendAds = ads ?? 0
@@ -811,7 +857,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // ── 채널 목록 완성 (전 지표 0인 채널은 제외) ────────────────
   // 비용 시트는 시간 축이 없어 기간 보기에서는 비용 열을 비운다
   const channels: Channel[] = Object.values(chan)
-    .filter(c => c.people + c.applications + c.docPass + c.interviews + c.hires > 0)
+    // FYI 두 시대 행은 0이어도 표시 — 8월~ 행이 새로 시작하는 구조 자체가 정보다
+    .filter(c => c.key.startsWith('FYI') || c.people + c.applications + c.docPass + c.interviews + c.hires > 0)
     .map(c => {
       const fees = start == null ? c.spendFees : null
       const ads = start == null ? c.spendAds : null
@@ -978,6 +1025,13 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // 월별 지원 추이: 미래 월 제거 + 빈 월 0 채움 (연속 12개월 축)
   const monthlyArr = toMonthSeries(monthly, nowMonth)
 
+  // 일별 채널 추이: 연속 30일 축 (빈 날은 빈 객체 — 0 채움은 차트가 처리)
+  const daily: DayPoint[] = []
+  for (let i = DAILY_WINDOW - 1; i >= 0; i--) {
+    const d = toVNDay(new Date(fetchedAt - i * 86400000).toISOString())
+    daily.push({ date: d, byChannel: dailyMap[d] || {} })
+  }
+
   return {
     generatedAt: new Date(fetchedAt).toISOString(),
     mode: 'live',
@@ -1000,6 +1054,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       applicationsTotal,
       channels,
       monthly: monthlyArr,
+      daily,
     },
     matching: {
       funnel,
@@ -1058,7 +1113,9 @@ const getCachedByPeriod = unstable_cache(
       '30d': computeFromRaw(raw, '30d', at),
     }
   },
-  ['staffing-master-data-v15'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  // v15 는 점검 탭 작업(별도 세션)이 선점한 적 있어 건너뜀 — Data Cache 는 배포로 안 비워져 재사용 위험
+  // v21: main(집계 리팩터) + 점검 탭(audit 필드) 합병 — v20 스냅샷엔 audit 이 없어 그대로 쓰면 안 된다
+  ['staffing-master-data-v21'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

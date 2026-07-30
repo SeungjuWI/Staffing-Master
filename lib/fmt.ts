@@ -27,8 +27,11 @@ export function fmtMonthFull(m: string): string {
   return `${y}년 ${parseInt(mo)}월`
 }
 
+// VN(UTC+7) 기준 올해 — 서버(UTC)·보는 사람 브라우저가 어디든 연도 판정은 베트남 기준
+const vnYear = () => new Date(Date.now() + 7 * 3600000).getUTCFullYear()
+
 // 'YYYY-MM-DD' → '5월 4일' (올해가 아니면 '25년 11월 12일')
-export function fmtDay(d: string, nowYear = new Date().getFullYear()): string {
+export function fmtDay(d: string, nowYear = vnYear()): string {
   const [y, mo, day] = d.split('-').map(Number)
   return y === nowYear ? `${mo}월 ${day}일` : `${String(y).slice(2)}년 ${mo}월 ${day}일`
 }
@@ -39,9 +42,10 @@ export function fmtSinceMonth(d: string): string {
   return `${y}년 ${mo}월`
 }
 
+// 절대 시각 표기는 베트남 시간(ICT) 고정 + 라벨 — 대시보드·ATS 와 같은 기준 (스태핑 표준)
 export function fmtDateTime(iso: string): string {
   const d = new Date(iso)
-  return d.toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' })
+  return `${d.toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' })} (ICT)`
 }
 
 // 채널 키 → 화면 표기
@@ -53,7 +57,10 @@ const CHANNEL_LABELS: Record<string, string> = {
   'jobs-go': 'JobsGO',
   glint: 'Glints',
   'landing-page': '랜딩페이지',
-  FYI: 'FYI (자체 플랫폼)',
+  FYI: 'FYI (자체 플랫폼)', // 시대 분리 전 키 — 공고 상세 도넛 등 시대 무관 표기용
+  // FYI 시대 분리 (2026-07-29 회의): 7월까지는 KTC 외 공고가 섞인 혼합 집계, 8월부터 KTC 공고만
+  'FYI-jul': 'FYI ~7월',
+  'FYI-aug': 'FYI 8월~',
   LinkedIn: 'LinkedIn',
   YBOX: 'YBOX',
   Vieclam24h: 'Vieclam24h',
@@ -72,6 +79,8 @@ const CHANNEL_KIND: Record<string, 'paid' | 'own' | 'free'> = {
   'top-dev': 'paid',
   LinkedIn: 'paid',
   FYI: 'own',
+  'FYI-jul': 'own',
+  'FYI-aug': 'own',
   'landing-page': 'own',
   'jobs-go': 'free',
   'top-cv': 'free',
