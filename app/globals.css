@@ -414,8 +414,8 @@ tbody tr.wkrow:hover { background: transparent; }
 .hsum .hs b { font-weight: 700; color: var(--ink); margin-left: 4px; font-variant-numeric: tabular-nums; }
 .hsum .hs.zero { opacity: 0.45; }
 /* 판정 툴팁 — 호버 즉시 표시, 카드와 같은 밝은 서피스.
-   요약 칩(기준 설명)과 공고명 셀(문제 공고의 판정 이유)이 같은 스타일을 공유한다 */
-.hsum .hs .tip, .jdcell .tip {
+   요약 칩(기준 설명)·공고명 셀(판정 이유)·출처 말풍선(.srctip)이 같은 스타일을 공유한다 */
+.hsum .hs .tip, .jdcell .tip, .srctip {
   display: none; position: absolute; z-index: 20;
   /* 흰 표 위에서 묻히지 않게 — 액센트 틴트 배경 + 액센트 기 도는 테두리 + 뚜렷한 그림자 */
   background: color-mix(in srgb, var(--accent) 7%, var(--surface));
@@ -441,6 +441,61 @@ tbody tr:nth-last-child(-n + 3) .jdcell .tip { top: auto; bottom: calc(100% - 5p
 .jdcell .tip .tipline {
   display: block; color: var(--muted); font-size: 11.5px; margin-bottom: 3px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 316px;
+}
+
+/* ═══ 데이터 출처 배지 (ⓘ) — "이 숫자는 어느 시트 어느 탭 어느 열에서 오나" ═══ */
+/* 컬럼 헤더·타일 라벨 옆의 작은 i 원 — 호버·포커스·탭(모바일) 시 출처 말풍선 (내용은 lib/sources.ts) */
+.srci {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 13px; height: 13px; margin-left: 5px; border-radius: 50%; flex: none;
+  border: 1px solid color-mix(in srgb, var(--muted) 55%, transparent); color: var(--muted);
+  cursor: help; vertical-align: 1.5px; user-select: none;
+}
+.srci i { font-style: normal; font-family: Georgia, 'Times New Roman', serif; font-size: 9.5px; font-weight: 650; line-height: 1; }
+.srci:hover, .srci:focus-visible {
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  outline: none;
+}
+/* 말풍선은 body 로 포털된 고정 레이어 — 표의 overflow 나 카드의 스택 문맥에 잘리지 않고 항상 맨 위.
+   위치는 JS 가 배지 좌표로 계산해 넣는다(left/top/bottom). .r 은 오른쪽 정렬(기본), .l 은 왼쪽 정렬.
+   링크를 눌러야 하니 마우스를 받는다 — 판정 툴팁(pointer-events:none)과 다른 점. */
+.srctip {
+  display: block; position: fixed; z-index: 200;
+  font-size: 12px; max-width: min(340px, calc(100vw - 24px));
+  pointer-events: auto; animation: fade 0.12s both;
+}
+.srctip.r { transform: translateX(-100%); }
+.src-t { display: block; font-weight: 650; color: var(--ink); margin-bottom: 2px; }
+.src-row { display: flex; gap: 7px; align-items: baseline; margin-top: 4px; }
+.src-k {
+  flex: none; width: 32px; text-align: center; border-radius: 4px; padding: 1px 0;
+  font-size: 10px; font-weight: 650; font-style: normal; line-height: 1.5;
+}
+.src-k.sheet { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--good); }
+.src-k.db { background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent-text); }
+.src-k.calc { border: 1px solid var(--border); color: var(--muted); }
+@media (prefers-color-scheme: dark) {
+  /* 어두운 배경에서 --good(#0ca30c) 은 칩 안에서 거의 안 읽힌다 — 밝은 초록으로 (DB 칩의 --accent-text 와 같은 밝기대) */
+  .src-k.sheet { background: color-mix(in srgb, var(--ok) 24%, transparent); color: #79dd79; }
+}
+.src-body { flex: 1; min-width: 0; color: var(--ink-2); }
+.src-body b { color: var(--ink); font-weight: 650; }
+/* 원본으로 바로 가는 링크 — 시트 탭(gid)·백오피스 (2026-07-30 대표 요청 "클릭해서 들어가볼 수 있게") */
+a.src-body.lk { cursor: pointer; text-decoration: none; }
+a.src-body.lk:hover b, a.src-body.lk:focus-visible b { color: var(--accent-text); text-decoration: underline; }
+a.src-body.lk:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.src-go { color: var(--accent-text); font-size: 10.5px; margin-left: 3px; white-space: nowrap; }
+.src-note {
+  display: block; margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--grid);
+  color: var(--muted); font-size: 11.5px;
+}
+/* 용어 탭 안내문 속 데모 배지 — 실제 배지와 같은 생김새의 비활성 표본 */
+.srci-demo {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 13px; height: 13px; border-radius: 50%; vertical-align: 1px;
+  border: 1px solid color-mix(in srgb, var(--muted) 55%, transparent); color: var(--muted);
+  font-family: Georgia, 'Times New Roman', serif; font-size: 9.5px; font-weight: 650; line-height: 1;
 }
 
 /* 기업별 성과 — 마이너스 이익 경고 */

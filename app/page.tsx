@@ -2,6 +2,7 @@ import { Suspense, cache } from 'react'
 import { getMasterData, type Period } from '@/lib/aggregate'
 import { fmtDateTime, fmtInt, fmtKrw, fmtPct, fmtSinceMonth, fmtUsd } from '@/lib/fmt'
 import { Funnel, MonthlyBars, StatTile } from '@/components/viz'
+import { SrcLinkProvider, SrcTip } from '@/components/src-tip'
 import { ChannelHealthSummary, ChannelTable, CompanyTable, JdHealthSummary } from '@/components/tables'
 import { JdTable } from '@/components/jd-table'
 import { DailyChannelLines } from '@/components/daily-chart'
@@ -134,8 +135,9 @@ async function Dashboard({
   const openJds = matching.jds.filter(j => j.open)
   const closedJds = matching.jds.filter(j => !j.open)
 
+  // SrcLinkProvider — 출처 말풍선(ⓘ)이 시트 탭 링크를 찾을 수 있게 트리 전체에 링크 맵 공급
   return (
-    <>
+    <SrcLinkProvider links={data.sheetLinks}>
       {data.mode === 'mock' && (
         <div className="banner">
           <b>데모 데이터</b> — 환경변수(.env.local)가 설정되지 않아 예시 수치를 표시하고 있습니다.
@@ -328,6 +330,7 @@ async function Dashboard({
               <span className="sub">
                 각 단계에 걸려 있는 인원 — 아랫줄은 모집 중 공고 몫, 호버하면 최다 공고
                 {filtered && ' · 현재 상태 스냅숏이라 기간 필터 무관'}
+                <SrcTip k="now.stages" left />
               </span>
             </div>
             <div className="strip">
@@ -335,13 +338,13 @@ async function Dashboard({
                 // 단계별: 전체(마감 잔류 포함) 큰 숫자 + 모집 중 공고 몫 + 최다 공고 툴팁.
                 // 마감 공고에 남은 상태값(예: 검토 중 232명)이 커서, 액션 가능한 몫을 분리해 보여준다.
                 type J = (typeof openJds)[number]
-                const stages: { label: string; total: number; of: (j: J) => number; hint?: string }[] = [
-                  { label: '스크리닝 대기', total: p.screeningQueue, of: j => j.curNew },
-                  { label: '합격 후 대기', total: p.screenPassed, of: j => j.curPassed, hint: '스크리닝은 합격했는데 아직 발송 준비에 들어가지 않은 인원' },
-                  { label: '발송 대기', total: p.readyToForward, of: j => j.curReady },
-                  { label: '기업 검토 중', total: p.sentToCompany, of: j => j.curCompany },
-                  { label: '면접 진행 중', total: p.interviewing, of: j => j.curInterview },
-                  { label: '오퍼·계약 중', total: p.offer, of: j => j.curOffer },
+                const stages: { label: string; total: number; of: (j: J) => number; status: string; hint?: string }[] = [
+                  { label: '스크리닝 대기', total: p.screeningQueue, of: j => j.curNew, status: 'new' },
+                  { label: '합격 후 대기', total: p.screenPassed, of: j => j.curPassed, status: 'passed', hint: '스크리닝은 합격했는데 아직 발송 준비에 들어가지 않은 인원' },
+                  { label: '발송 대기', total: p.readyToForward, of: j => j.curReady, status: 'ready_to_forward' },
+                  { label: '기업 검토 중', total: p.sentToCompany, of: j => j.curCompany, status: 'sent_to_company' },
+                  { label: '면접 진행 중', total: p.interviewing, of: j => j.curInterview, status: 'interviewing' },
+                  { label: '오퍼·계약 중', total: p.offer, of: j => j.curOffer, status: 'offer' },
                 ]
                 return stages.map(s => {
                   const inOpen = openJds.reduce((n, j) => n + s.of(j), 0)
@@ -351,6 +354,7 @@ async function Dashboard({
                     s.hint,
                     top && s.of(top) > 0 ? `모집 중 최다: ${top.company} ${top.code} — ${fmtInt(s.of(top))}명` : null,
                     rest > 0 ? `'그 외'는 마감 공고 잔류·공고 미귀속 인원` : null,
+                    `출처: ktc-support DB candidates — pipeline_status = '${s.status}' 인 인원`,
                   ]
                     .filter(Boolean)
                     .join('\n')
@@ -414,15 +418,16 @@ async function Dashboard({
               <span className="sub">베트남 기업 ↔ 베트남 인재 — FYI 플랫폼 안에서 직접 매칭 (ktc-support 미경유)</span>
             </div>
             <div className="tiles">
-              <StatTile label="활성 공고" num={v.jobsActive} unit="건" sub={`누적 등록 ${fmtInt(v.jobsTotal)}건`} />
-              <StatTile label="등록 기업" num={v.companies} unit="곳" />
-              <StatTile label="지원 건" num={v.applications} unit="건" />
-              <StatTile label="지원자" num={v.applicants} unit="명" />
+              <StatTile label="활성 공고" num={v.jobsActive} unit="건" sub={`누적 등록 ${fmtInt(v.jobsTotal)}건`} src="vn.jobs" />
+              <StatTile label="등록 기업" num={v.companies} unit="곳" src="vn.companies" />
+              <StatTile label="지원 건" num={v.applications} unit="건" src="vn.apps" />
+              <StatTile label="지원자" num={v.applicants} unit="명" src="vn.applicants" />
               <StatTile
                 label="기업 열람"
                 num={v.viewed}
                 unit="건"
                 sub={v.applications > 0 ? `열람율 ${fmtPct(v.viewed / v.applications, 0)}` : undefined}
+                src="vn.viewed"
               />
             </div>
           </section>
@@ -454,10 +459,10 @@ async function Dashboard({
               <span className="sub">salary-fyi.com 에 쌓인 매칭 가능 인재</span>
             </div>
             <div className="tiles">
-              <StatTile label="이력서 등록" num={supply.talentPoolResume} unit="명" />
-              <StatTile label="이력서 공개 (HR 열람 가능)" num={supply.talentPoolPublic} unit="명" />
-              <StatTile label="지원자 (전 채널 누적)" num={supply.candidatesTotal} unit="명" />
-              <StatTile label="지원 건 (전 채널 누적)" num={supply.applicationsTotal} unit="건" />
+              <StatTile label="이력서 등록" num={supply.talentPoolResume} unit="명" src="tp.resume" />
+              <StatTile label="이력서 공개 (HR 열람 가능)" num={supply.talentPoolPublic} unit="명" src="tp.public" />
+              <StatTile label="지원자 (전 채널 누적)" num={supply.candidatesTotal} unit="명" src="tp.people" />
+              <StatTile label="지원 건 (전 채널 누적)" num={supply.applicationsTotal} unit="건" src="tp.apps" />
             </div>
           </section>
 
@@ -478,7 +483,7 @@ async function Dashboard({
           <section className="section">
             <div className="section-head">
               <h2>월별 지원 건 추이</h2>
-              <span className="sub">전 채널 합산, 지원월 기준</span>
+              <span className="sub">전 채널 합산, 지원월 기준<SrcTip k="chart.apps" left /></span>
             </div>
             <div className="card">
               <MonthlyBars points={supply.monthly} />
@@ -490,6 +495,7 @@ async function Dashboard({
               <h2>일별 지원 건 추이</h2>
               <span className="sub">
                 최근 30일 · 채널별, 지원일 기준 — 채널 이름을 누르면 그 채널만 보기, 그래프에 마우스를 올리면 날짜별 상세
+                <SrcTip k="chart.apps" left />
               </span>
             </div>
             <div className="card">
@@ -504,7 +510,10 @@ async function Dashboard({
         <section className="section">
           <div className="section-head">
             <h2>용어 사전</h2>
-            <span className="sub">이 대시보드의 모든 숫자는 아래 정의를 따릅니다</span>
+            <span className="sub">
+              이 대시보드의 모든 숫자는 아래 정의를 따릅니다 — 표·타일의 <span className="srci-demo">i</span> 배지에
+              마우스를 올리면 그 숫자의 원본(어느 시트 · 어느 탭 · 어느 열)이 보입니다
+            </span>
           </div>
           <div className="card">
             <dl className="glossary">
@@ -639,6 +648,6 @@ async function Dashboard({
           </div>
         </section>
       )}
-    </>
+    </SrcLinkProvider>
   )
 }

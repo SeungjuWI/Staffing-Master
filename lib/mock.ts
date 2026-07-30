@@ -6,6 +6,7 @@ export function mockData(): MasterData {
     generatedAt: new Date().toISOString(),
     mode: 'mock',
     warnings: [],
+    sheetLinks: {}, // 데모 모드에는 실제 시트가 없어 출처 말풍선의 링크를 걸지 않는다
     headline: {
       hiresTotal: 17,
       hiresInPeriod: null,

@@ -12,6 +12,8 @@ import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { JdRow } from '@/lib/types'
 import { channelLabel, fmtDay, fmtInt } from '@/lib/fmt'
 import { EmptyState, Meter } from './viz'
+import { SrcTip } from './src-tip'
+import type { SrcKey } from '@/lib/sources'
 import { HEALTH_META, HEALTH_ORDER, jdView } from './tables'
 
 const SEL_KEY = 'sm-jd-sel-v1'
@@ -213,12 +215,14 @@ const sortVal = (j: JdRow, key: SortKey): string | number | null => {
 }
 
 function SortTh({
-  label, k, sort, onSort,
+  label, k, sort, onSort, src, srcLeft,
 }: {
   label: string
   k: SortKey
   sort: Sort
   onSort: (k: SortKey) => void
+  src?: SrcKey       // 지정 시 라벨 옆 데이터 출처 배지 (ⓘ)
+  srcLeft?: boolean
 }) {
   const on = sort.key === k
   return (
@@ -229,6 +233,8 @@ function SortTh({
       aria-sort={on ? (sort.dir === -1 ? 'descending' : 'ascending') : 'none'}
     >
       {label}
+      {/* 배지 클릭은 SrcTip 이 자체적으로 전파를 끊는다 — 출처를 보려던 클릭에 표가 뒤섞이지 않게 */}
+      {src && <SrcTip k={src} left={srcLeft} />}
       <span className="sarr" aria-hidden>{on ? (sort.dir === -1 ? '▼' : '▲') : ''}</span>
     </th>
   )
@@ -325,16 +331,16 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
             <thead>
               <tr>
                 {open && <th className="selcell" aria-label="공고 선택" />}
-                <SortTh label="공고" k="company" sort={sort} onSort={onSort} />
-                <SortTh label="모집 시작" k="received" sort={sort} onSort={onSort} />
-                {!open && <th>상태</th>}
-                <SortTh label="TO" k="to" sort={sort} onSort={onSort} />
-                <SortTh label="지원" k="apps" sort={sort} onSort={onSort} />
-                <SortTh label="합격" k="docPass" sort={sort} onSort={onSort} />
-                <SortTh label="전달" k="delivered" sort={sort} onSort={onSort} />
-                <SortTh label="면접" k="interviews" sort={sort} onSort={onSort} />
-                <SortTh label="입사" k="hires" sort={sort} onSort={onSort} />
-                <SortTh label="충원율" k="fill" sort={sort} onSort={onSort} />
+                <SortTh label="공고" k="company" sort={sort} onSort={onSort} src="jd.jd" srcLeft />
+                <SortTh label="모집 시작" k="received" sort={sort} onSort={onSort} src="jd.received" srcLeft />
+                {!open && <th>상태<SrcTip k="jd.status" /></th>}
+                <SortTh label="TO" k="to" sort={sort} onSort={onSort} src="jd.to" />
+                <SortTh label="지원" k="apps" sort={sort} onSort={onSort} src="jd.apps" />
+                <SortTh label="합격" k="docPass" sort={sort} onSort={onSort} src="pipe.docPass" />
+                <SortTh label="전달" k="delivered" sort={sort} onSort={onSort} src="pipe.delivered" />
+                <SortTh label="면접" k="interviews" sort={sort} onSort={onSort} src="pipe.interviews" />
+                <SortTh label="입사" k="hires" sort={sort} onSort={onSort} src="jd.filled" />
+                <SortTh label="충원율" k="fill" sort={sort} onSort={onSort} src="jd.fill" />
               </tr>
             </thead>
             <tbody>

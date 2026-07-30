@@ -1,6 +1,7 @@
 import type { Channel, CompanyPerf, JdHealth, JdRow } from '@/lib/types'
 import { CHANNEL_KIND_LABELS, channelKind, channelLabel, fmtInt, fmtKrw, fmtUsd } from '@/lib/fmt'
 import { EmptyState } from './viz'
+import { SrcTip } from './src-tip'
 
 // ── 채널 판정 어휘 — "뭐가 성과 좋고 나쁜지"의 즉답. 공고 판정(JdHealth)과 같은 점 어휘를 쓴다.
 //  성과   입사를 만들었고 비용도 정상 범위 (무비용 포함)
@@ -87,14 +88,14 @@ const CH_COLGROUP = (
 )
 const CH_THEAD = (
   <tr>
-    <th>채널</th>
-    <th>지원자</th>
-    <th>스크리닝 합격</th>
-    <th>면접</th>
-    <th>입사</th>
-    <th>지출</th>
-    <th>지원자당 비용</th>
-    <th>채용당 비용</th>
+    <th>채널<SrcTip k="ch.channel" left /></th>
+    <th>지원자<SrcTip k="ch.people" /></th>
+    <th>스크리닝 합격<SrcTip k="pipe.docPass" /></th>
+    <th>면접<SrcTip k="pipe.interviews" /></th>
+    <th>입사<SrcTip k="pipe.hires" /></th>
+    <th>지출<SrcTip k="ch.spend" /></th>
+    <th>지원자당 비용<SrcTip k="ch.cpa" /></th>
+    <th>채용당 비용<SrcTip k="ch.cph" /></th>
   </tr>
 )
 
@@ -261,11 +262,11 @@ export function CompanyTable({ companies }: { companies: CompanyPerf[] }) {
       <table>
         <thead>
           <tr>
-            <th>기업</th>
-            <th>입사</th>
-            <th>재직 중</th>
-            <th>총 매출</th>
-            <th>이익</th>
+            <th>기업<SrcTip k="co.company" left /></th>
+            <th>입사<SrcTip k="co.hires" /></th>
+            <th>재직 중<SrcTip k="co.working" /></th>
+            <th>총 매출<SrcTip k="co.revenue" /></th>
+            <th>이익<SrcTip k="co.profit" /></th>
           </tr>
         </thead>
         <tbody>

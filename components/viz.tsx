@@ -1,9 +1,11 @@
 import type { FunnelStage, MonthPoint } from '@/lib/types'
 import { fmtInt, fmtMonth, fmtMonthFull, fmtPct } from '@/lib/fmt'
+import type { SrcKey } from '@/lib/sources'
 import { CountUp, type CountKind } from './count-up'
+import { SrcTip } from './src-tip'
 
 export function StatTile({
-  label, value, num, kind, unit, sub, hero,
+  label, value, num, kind, unit, sub, hero, src,
 }: {
   label: string
   value?: string          // num 미지정 시 그대로 표시 ('–' 등)
@@ -12,10 +14,14 @@ export function StatTile({
   unit?: string
   sub?: React.ReactNode
   hero?: boolean
+  src?: SrcKey            // 지정 시 라벨 옆 출처 배지
 }) {
   return (
     <div className={hero ? 'tile hero' : 'tile'}>
-      <div className="label">{label}</div>
+      <div className="label">
+        {label}
+        {src && <SrcTip k={src} left />}
+      </div>
       <div className="value">
         {num != null ? <CountUp n={num} kind={kind || 'int'} /> : value}
         {unit ? <small>{unit}</small> : null}
@@ -26,6 +32,16 @@ export function StatTile({
 }
 
 const FUNNEL_COLORS = ['var(--f1)', 'var(--f2)', 'var(--f3)', 'var(--f4)', 'var(--f5)', 'var(--f6)']
+
+// 퍼널 단계 → 출처 사전 키 (stage.key 는 aggregate 의 funnel 정의와 짝)
+const FUNNEL_SRC: Record<string, SrcKey> = {
+  people: 'tp.people',
+  screened: 'pipe.docPass',
+  delivered: 'pipe.delivered',
+  interview: 'pipe.interviews',
+  offer: 'pipe.offer',
+  hired: 'pipe.hires',
+}
 
 export function Funnel({ stages, extra }: { stages: FunnelStage[]; extra?: string }) {
   const max = Math.max(1, ...stages.map(s => s.count))
@@ -40,7 +56,10 @@ export function Funnel({ stages, extra }: { stages: FunnelStage[]; extra?: strin
           const conv = prev ? s.count / prev : null
           return (
             <div className="frow" key={s.key}>
-              <div className="flabel">{s.label}</div>
+              <div className="flabel">
+                {s.label}
+                {FUNNEL_SRC[s.key] && <SrcTip k={FUNNEL_SRC[s.key]} left />}
+              </div>
               <div className="fbar-area">
                 <div
                   className="fbar"

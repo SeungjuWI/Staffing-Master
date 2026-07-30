@@ -92,6 +92,9 @@ export type MasterData = {
   generatedAt: string
   mode: 'live' | 'mock'
   warnings: string[]     // 부분 실패 (비용 시트 등) — UI 에 그대로 노출
+  // 출처 말풍선의 시트 링크 — 키 `<시트키>|<탭이름>` → 그 탭 URL (lib/sources.ts srcHref 가 해석).
+  // 크레덴셜이 없거나 조회 실패면 빈 객체 → 링크 없이 평문으로만 표시된다.
+  sheetLinks: Record<string, string>
 
   headline: {
     hiresTotal: number          // 입사 누적 (Ops Employee)

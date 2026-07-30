@@ -246,7 +246,34 @@ type Raw = {
   vnJobs: any[]
   vnApps: any[]
   cost: CostData | null
+  sheetLinks: Record<string, string>
   fetchedAt: number
+}
+
+// 시트 원본 링크 — "이 숫자 어디서 왔나" 말풍선에서 해당 탭으로 바로 갈 수 있게 (2026-07-30 대표 요청).
+// 키는 `<시트키>|<탭이름>`, 값은 그 탭으로 열리는 URL. 탭 없는 키(`<시트키>|`)는 문서 첫 화면.
+// 문서 ID 는 환경변수로 바뀔 수 있어 클라이언트에 하드코딩하지 않고 여기서 만들어 내려보낸다.
+const SHEET_IDS: [string, string][] = [
+  ['master', MASTER_SHEET_ID], ['ops', KTC_OPS_SHEET_ID],
+  ['cost', COST_SHEET_ID], ['cand', CANDIDATE_SHEET_ID],
+]
+async function fetchSheetLinks(sheets: any): Promise<Record<string, string>> {
+  const out: Record<string, string> = {}
+  if (!sheets) return out
+  await Promise.all(
+    SHEET_IDS.map(async ([key, id]) => {
+      const base = `https://docs.google.com/spreadsheets/d/${id}/edit`
+      out[`${key}|`] = base
+      // 탭 제목·gid 만 — 전체 메타데이터는 무겁다
+      const res = await sheets.spreadsheets.get({ spreadsheetId: id, fields: 'sheets.properties(sheetId,title)' })
+      for (const s of res.data.sheets || []) {
+        const title = s.properties?.title
+        const gid = s.properties?.sheetId
+        if (title && gid != null) out[`${key}|${title}`] = `${base}#gid=${gid}`
+      }
+    }),
+  )
+  return out
 }
 
 // ── 원본 로드 (기간·탭 무관, 30분 캐시) ─────────────────────
@@ -480,9 +507,12 @@ async function fetchRaw(): Promise<Raw> {
     return { spendByChannel, postedByChannel, ktcMeta, fyiMeta }
   }, null) : Promise.resolve<CostData | null>(null)
 
+  // 출처 말풍선의 탭 링크 — 실패해도 나머지는 정상 (링크 없이 평문 표시)
+  const pLinks = grab('시트 탭 링크', () => fetchSheetLinks(sheets), {} as Record<string, string>)
+
   // 위에서 띄운 promise 를 전부 한 번에 대기 (콜드 fetch = 가장 느린 1개 시간)
-  const [candidates, applications, resumeCount, publicCount, master, ops, fyiWrap, vn, cost] =
-    await Promise.all([pCandidates, pApplications, pResume, pPublic, pMaster, pOps, pFyiApps, pVn, pCost])
+  const [candidates, applications, resumeCount, publicCount, master, ops, fyiWrap, vn, cost, sheetLinks] =
+    await Promise.all([pCandidates, pApplications, pResume, pPublic, pMaster, pOps, pFyiApps, pVn, pCost, pLinks])
   const [jdSheet] = master
   const [empSheet, revSheet, toSheet] = ops
   const { fyiApps, fyiJobById } = fyiWrap
@@ -503,7 +533,7 @@ async function fetchRaw(): Promise<Raw> {
     }
   }
 
-  return { warnings, candidates, applications, resumeCount, publicCount, jdSheet, empSheet, revSheet, toSheet, fyiApps, fyiJobById, vnJobs, vnApps, cost, fetchedAt: Date.now() }
+  return { warnings, candidates, applications, resumeCount, publicCount, jdSheet, empSheet, revSheet, toSheet, fyiApps, fyiJobById, vnJobs, vnApps, cost, sheetLinks, fetchedAt: Date.now() }
 }
 
 type ChanAcc = {
@@ -1027,6 +1057,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     generatedAt: new Date(fetchedAt).toISOString(),
     mode: 'live',
     warnings: raw.warnings,
+    sheetLinks: raw.sheetLinks,
     headline: {
       hiresTotal: finalPassedAll,
       hiresInPeriod,
@@ -1096,7 +1127,7 @@ const getCachedByPeriod = unstable_cache(
     }
   },
   // v15 는 점검 탭 작업(별도 세션)이 선점한 적 있어 건너뜀 — Data Cache 는 배포로 안 비워져 재사용 위험
-  ['staffing-master-data-v20'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v21'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 
