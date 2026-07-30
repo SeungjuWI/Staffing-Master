@@ -228,7 +228,7 @@ type CostData = {
   spendByChannel: Record<string, number>
   postedByChannel: Record<string, number>
   ktcMeta: number
-  fyiKtcMeta: number
+  fyiMeta: number
 }
 
 type Raw = {
@@ -436,10 +436,12 @@ async function fetchRaw(): Promise<Raw> {
         }
       }
     }
-    // Meta 광고비 분해 — 채용 마케팅비 포함 여부의 진실 원천은 12. meta-campaign-summary 탭의
-    // 'Recruiting for KTC'(yes/no) 열 (2026-07-28 Alice 확인: 행사 캠페인 Mentoring·Hackathon·July-Event
-    // 는 KTC 지원자 모집 목적 = 포함, Launch-App 앱 설치는 제외). 원장에 아직 없는 신규 캠페인은
-    // 이름 규칙(KTC* 또는 FYI_*KTC*)으로 폴백. 채널 배분은 이름 접두: FYI_* = FYI 경유, 그 외 = 랜딩.
+    // Meta 광고비 분해 (2. 캠페인별 Meta 광고 성과 탭) — 채널 배분은 이름 접두: FYI_* = FYI, 그 외 = 랜딩.
+    // FYI_* 캠페인은 KTC 모집 목적 여부 무관 전액 합산 (2026-07-30 대표 지시 "FYI로 쳐진 거 다 넣어") —
+    // ~7월 FYI 행 자체가 KTC 외 공고가 섞인 혼합 집계라 비용도 FYI 광고비 전액이 짝이 맞는다.
+    // 랜딩 몫만 채용 목적 필터: 진실 원천은 12. meta-campaign-summary 탭의 'Recruiting for KTC'(yes/no) 열
+    // (2026-07-28 Alice 확인: Mentoring·Hackathon·July-Event 포함, Launch-App 앱 설치는 제외),
+    // 원장에 아직 없는 신규 캠페인은 이름 규칙(KTC*)으로 폴백.
     // 캠페인명이 탭마다 달라(…_MT-lead_·_bud:aso 접미 유무) "앞 두 세그먼트 + 최장 숫자열" 키로 맞춘다.
     const campaignKey = (s: string) => {
       const segs = s.split('_').map(x => x.toLowerCase().replace(/[^a-z0-9]/g, ''))
@@ -459,7 +461,7 @@ async function fetchRaw(): Promise<Raw> {
         ktcRecruitByKey[campaignKey(name)] = flag === 'yes'
       }
     }
-    let ktcMeta = 0, fyiKtcMeta = 0
+    let ktcMeta = 0, fyiMeta = 0
     const mIdx = metaRows.findIndex((r: any[]) => r.some(c => String(c || '').trim() === 'Campaign') && r.some(c => String(c || '').startsWith('Spend')))
     if (mIdx >= 0) {
       const MH = metaRows[mIdx]
@@ -469,14 +471,13 @@ async function fetchRaw(): Promise<Raw> {
         const name = String(r[mNameCol] || '').trim()
         const spend = parseKrw(r[mSpendCol])
         if (!name || spend == null) continue
+        if (/^fyi/i.test(name)) { fyiMeta += spend; continue }
         const ledger = ktcRecruitByKey[campaignKey(name)]
-        const isRecruit = ledger != null ? ledger : /^ktc/i.test(name) || (/^fyi/i.test(name) && /ktc/i.test(name))
-        if (!isRecruit) continue
-        if (/^fyi/i.test(name)) fyiKtcMeta += spend
-        else ktcMeta += spend
+        const isRecruit = ledger != null ? ledger : /^ktc/i.test(name)
+        if (isRecruit) ktcMeta += spend
       }
     }
-    return { spendByChannel, postedByChannel, ktcMeta, fyiKtcMeta }
+    return { spendByChannel, postedByChannel, ktcMeta, fyiMeta }
   }, null) : Promise.resolve<CostData | null>(null)
 
   // 위에서 띄운 promise 를 전부 한 번에 대기 (콜드 fetch = 가장 느린 1개 시간)
@@ -832,9 +833,10 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   if (raw.cost) {
     for (const c of Object.values(chan)) {
       const fees = raw.cost.spendByChannel[c.key]
-      // FYI 광고비는 비용 시트에 시간 축이 없어 일단 ~7월 행에 전액 누적 — 8월 마케팅 집행이
-      // 시작되면 비용 원장에 월 구분을 만들어 8월~ 행 몫을 분리해야 한다
-      const ads = c.key === 'landing-page' ? (raw.cost.ktcMeta || null) : c.key === 'FYI-jul' ? (raw.cost.fyiKtcMeta || null) : null
+      // FYI 광고비(FYI_* 캠페인 전액 — KTC 목적 무관, 07-30 대표 지시)는 비용 시트에 시간 축이
+      // 없어 일단 ~7월 행에 전액 누적 — 8월 마케팅 집행이 시작되면 비용 원장에 월 구분을 만들어
+      // 8월~ 행 몫을 분리해야 한다
+      const ads = c.key === 'landing-page' ? (raw.cost.ktcMeta || null) : c.key === 'FYI-jul' ? (raw.cost.fyiMeta || null) : null
       if (fees != null || ads != null) {
         c.spendFees = fees ?? 0
         c.spendAds = ads ?? 0
@@ -1094,7 +1096,7 @@ const getCachedByPeriod = unstable_cache(
     }
   },
   // v15 는 점검 탭 작업(별도 세션)이 선점한 적 있어 건너뜀 — Data Cache 는 배포로 안 비워져 재사용 위험
-  ['staffing-master-data-v19'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v20'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 
