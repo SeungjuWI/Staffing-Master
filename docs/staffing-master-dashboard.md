@@ -37,6 +37,7 @@
 | FYI 인재풀·베트남 매칭 | salarymap DB | 실시간 조회 |
 | 공고 원장·면접 | Master 시트 (JD EXECUTION / INTERVIEW) | 실시간 조회 |
 | 입사·재직·매출 | KTC Ops 시트 (Employee / 매출현황) | 실시간 조회 |
+| 공고별 TO·충원·이탈 | KTC Ops 시트 (Matching Status) | 실시간 조회 |
 | 채널별 지출 | 비용 시트 (통합 비교표·invoice·캠페인별) | 실시간 조회 |
 
 - 각 표의 컬럼 헤더·타일 라벨 옆 ⓘ 배지에 마우스를 올리면 그 지표의 원본(어느 시트 · 어느 탭 · 어느 열, 가공 방식)이 말풍선으로 표시되고, **각 줄을 클릭하면 그 시트 탭이 새 창으로 열림** (2026-07-30 대표 요청)
@@ -96,6 +97,16 @@
 - 호스팅: Vercel, vn-newbiz 팀 / 프로젝트 staffing-master
 - 환경변수: salarymap·ktc-support DB 키, 구글 서비스 계정, 대시보드 비밀번호 (Vercel 프로젝트 설정에서 관리)
 - 지원 건 수치는 salarymap의 KTC 동기화 실행 주기에 의존 (그 외 지표는 항상 실시간)
+
+## 7-1. TO·충원 원장 교체 (2026-07-30)
+
+- `TO_Table_수정` 탭은 미완성이라 참조 금지 (대표 지시) → **KTC Ops `Matching Status` 탭**으로 교체
+  - TO = `Total TO` 열 · 충원 = `Matches` 열 · 이탈 = `이탈` 열 · 기업 반응 = `인터뷰 완료`/`매칭 1` 날짜 유무
+  - 같은 스프레드시트의 `Dashboard` 탭 요약(TO 122 · Matches 47 · 전환률 38.5%)이 이 탭에서 산출되는 값과 일치 — 운영 정본임을 확인
+- 교체 영향 (진행 중 공고 기준): **충원 6명 → 6명 동일**, **TO 36 → 38** (`TO_Table_수정`에 없던 MPNX2801·NA3401·OP2701이 채워진 것)
+- 남은 시트 측 정리 필요 사항
+  - Zest 공고코드 불일치: JD EXECUTION은 `ZE3501`/`ZE3502`, Matching Status는 `ZE3401`/`ZE3402` → 매칭되지 않아 TO가 폴백(공란)으로 표시됨
+  - Matching Status 미등재 진행 중 공고: YD1903 · YD1904 · JIC3302 · ZE3501 · ZE3502 · CR3601 · ET3701 (JD EXECUTION Headcount로 폴백)
 
 ## 8. 향후 과제
 

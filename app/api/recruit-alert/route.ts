@@ -23,7 +23,7 @@ type Flagged = {
   apps: number
   target: number
   to: number
-  toMissing: boolean // TO_Table 미등재 + Headcount 공란 → TO=1 로 간주함
+  toMissing: boolean // Matching Status 미등재 + Headcount 공란 → TO=1 로 간주함
   low: boolean       // 대시보드 '지원 부족' 판정과 일치 (D+7 이후 30건/TO 기준)
 }
 

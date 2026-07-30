@@ -421,13 +421,13 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                     <td>{fmtInt(j.docPass)}</td>
                     <td>{fmtInt(j.delivered)}</td>
                     <td>{fmtInt(j.interviews)}</td>
-                    <td title={'채운 자리 — KTC Ops TO_Table 매칭 기준 (이탈은 제외)'}>{fmtInt(j.hiresAll)}</td>
+                    <td title={'채운 자리 — KTC Ops Matching Status 의 Matches 기준 (이탈은 제외)'}>{fmtInt(j.hiresAll)}</td>
                     <td
                       title={
                         j.headcount
                           ? `충원 ${fmtInt(j.hiresAll)} / TO ${fmtInt(j.headcount)} · ${Math.round(
                               (j.hiresAll / j.headcount) * 100
-                            )}%${j.dropped > 0 ? ` (이탈 ${fmtInt(j.dropped)})` : ''} — KTC Ops TO_Table 기준`
+                            )}%${j.dropped > 0 ? ` (이탈 ${fmtInt(j.dropped)})` : ''} — KTC Ops Matching Status 기준`
                           : undefined
                       }
                     >

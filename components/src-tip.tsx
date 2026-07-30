@@ -17,8 +17,14 @@ const LinkCtx = createContext<Record<string, string>>({})
 
 // page.tsx 가 서버에서 읽은 시트 링크를 트리 전체에 공급 — 서버 컴포넌트(표·타일)가 렌더한
 // 배지든 클라이언트 컴포넌트(공고 표)가 렌더한 배지든 같은 링크 맵을 쓴다.
-export function SrcLinkProvider({ links, children }: { links: Record<string, string>; children: React.ReactNode }) {
-  return <LinkCtx.Provider value={links}>{children}</LinkCtx.Provider>
+export function SrcLinkProvider({
+  links,
+  children,
+}: {
+  links: Record<string, string> | undefined
+  children: React.ReactNode
+}) {
+  return <LinkCtx.Provider value={links || {}}>{children}</LinkCtx.Provider>
 }
 
 type Pos = { left: number; top?: number; bottom?: number; align: 'l' | 'r' }

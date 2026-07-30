@@ -103,6 +103,8 @@ export async function GET() {
   let jdTotal = 0, jdOpen = 0, headcountOpen = 0, ivPeople = 0, ivNoCodeRows = 0
   const openHeadcountFallback: Record<string, number> = {}
   const toTableByCode: Record<string, { to: number; filled: number }> = {}
+  // 공고별 파이프라인 입사(final_passed) — Matching Status 에 없는 공고의 충원 폴백을 그대로 재현하려면 필요
+  const fpByCode: Record<string, number> = {}
   let empTotal = 0, empIng = 0, empAttributed = 0, revSum = 0, profitSum = 0
   let finalPassedNotInEmp = 0
   // 공고별 지원 크로스소스 대조 재료 (2026-07-28 FPT403 맹점 재발 방지 —
@@ -122,24 +124,36 @@ export async function GET() {
   if (sheet) {
     const [mRes, oRes] = await Promise.all([
       sheet.spreadsheets.values.batchGet({ spreadsheetId: MASTER, ranges: ["'JD EXECUTION'!A1:N", "'INTERVIEW'!A1:N"] }),
-      sheet.spreadsheets.values.batchGet({ spreadsheetId: OPS, ranges: ["'Employee'!A1:T", "'매출현황'!A1:N", "'TO_Table_수정'!A1:R"] }),
+      sheet.spreadsheets.values.batchGet({ spreadsheetId: OPS, ranges: ["'Employee'!A1:T", "'매출현황'!A1:N", "'Matching Status'!A1:BD"] }),
     ])
     const [jdRows, ivRows] = mRes.data.valueRanges.map((v: any) => v.values || [])
     const [empRows, revRows, toRows] = oRes.data.valueRanges.map((v: any) => v.values || [])
 
-    // TO 원장 독립 재집계 (aggregate 와 같은 규칙 — 헤더 이름으로 열 해석)
+    // TO·충원 원장 독립 재집계 (aggregate 와 같은 규칙 — 헤더 이름으로 열 해석).
+    // 2026-07-30: TO_Table_수정(미완성, 참조 금지) → Matching Status 로 교체. 1행 = 공고 1건.
     {
-      const hIdx = toRows.findIndex((r: any[]) => (r || []).some((c: any) => /vn\s*code/i.test(String(c || ''))))
+      const norm = (c: any) => String(c || '').replace(/\n/g, ' ').trim()
+      const hIdx = toRows.findIndex((r: any[]) => (r || []).some((c: any) => /vn\s*code/i.test(norm(c))))
       if (hIdx >= 0) {
         const H: any[] = toRows[hIdx]
-        const cCode = H.findIndex((h: any) => /vn\s*code/i.test(String(h || '').trim()))
-        const cState = H.findIndex((h: any) => /현재\s*상태/.test(String(h || '').trim()))
+        const col = (re: RegExp, fb: number) => {
+          const i = H.findIndex((h: any) => re.test(norm(h)))
+          return i >= 0 ? i : fb
+        }
+        const cCode = col(/^vn\s*code$/i, 6)
+        const cTo = col(/^total\s*to$/i, 22)
+        const cMatch = col(/^matches$/i, 24)
+        const toNum = (v: any) => {
+          const n = parseInt(String(v ?? '').replace(/[^0-9-]/g, ''))
+          return Number.isFinite(n) ? n : 0
+        }
         for (const r of toRows.slice(hIdx + 1)) {
+          // 합계·테스트 행과 공고코드 없는 VN 트랙 행 배제 (소문자 코드도 있어 대문자로 맞춘다)
           const c = String((r || [])[cCode] || '').trim().toUpperCase()
-          if (!c) continue
+          if (!/^[A-Z]{2,6}\d{3,4}$/.test(c)) continue
           const b = toTableByCode[c] || (toTableByCode[c] = { to: 0, filled: 0 })
-          b.to++
-          if (String(r[cState] || '').trim() === '매칭') b.filled++
+          b.to += toNum(r[cTo])
+          b.filled += toNum(r[cMatch])
         }
       }
     }
@@ -163,13 +177,14 @@ export async function GET() {
       if (!CLOSED_RE.test(String(r[JCstatus] || '').trim())) {
         jdOpen++
         jdOpenCodes.add(code)
-        // TO 는 KTC Ops TO_Table 이 정본 (아래에서 코드별로 채움) — 원장에 없는 공고만 Headcount 폴백
+        // TO 는 KTC Ops Matching Status 가 정본 (아래에서 코드별로 채움) — 원장에 없는 공고만 Headcount 폴백
         openHeadcountFallback[code.toUpperCase()] = parseInt(r[JCcount]) || 0
       }
     }
-    // 오픈 공고 TO 합 = 코드별로 TO_Table 우선, 미등재면 JD Headcount
+    // 오픈 공고 TO 합 = 코드별로 Matching Status 우선, 미등재(또는 Total TO 공란)면 JD Headcount
+    // — aggregate 의 hasTo(to > 0) 판정과 같은 규칙이어야 대조가 유효하다
     headcountOpen = Object.entries(openHeadcountFallback).reduce(
-      (s, [c, hc]) => s + (toTableByCode[c] ? toTableByCode[c].to : hc),
+      (s, [c, hc]) => s + (toTableByCode[c]?.to ? toTableByCode[c].to : hc),
       0
     )
 
@@ -187,6 +202,10 @@ export async function GET() {
     const fp = await fetchAll<any>(ktc, 'candidates', 'full_name, email, applied_company, applied_job, sheet_source', q => q.eq('pipeline_status', 'final_passed'))
     const norm = (s: any) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim()
     const fpNamesNorm = new Set(fp.map(c => norm(c.full_name)).filter(Boolean))
+    for (const c of fp) {
+      const m = String(c.applied_job || '').trim().match(/^([A-Z]{2,6}\d{3,4})/)
+      if (m) fpByCode[m[1].toUpperCase()] = (fpByCode[m[1].toUpperCase()] || 0) + 1
+    }
     const hIdx = empRows.findIndex((r: any[]) => r.includes('Name') && r.some((c: any) => /e-?mail/i.test(c || '')))
     const empEmails = new Set<string>()
     const empNamesNorm = new Set<string>()
@@ -408,12 +427,17 @@ export async function GET() {
     { name: 'FYI 지원 공고미귀속 (모집 중 공고)', dashboard: fyiUnattrActive, source: 0, note: '모집 중인 FYI 공고인데 원장 제목과 매칭 실패 — 공고별 표시 누락 위험 (상세 details)' },
     { name: '공고 수 (전체)', dashboard: d.matching.jds.length, source: jdTotal, note: 'JD EXECUTION 재집계' },
     { name: '오픈 공고', dashboard: d.matching.openJds, source: jdOpen, note: '' },
-    { name: '오픈 공고 TO 합', dashboard: d.matching.headcountTotal, source: headcountOpen, note: 'TO_Table 우선, 미등재만 Headcount' },
+    { name: '오픈 공고 TO 합', dashboard: d.matching.headcountTotal, source: headcountOpen, note: 'Matching Status Total TO 우선, 미등재만 Headcount' },
     {
       name: '오픈 공고 충원 합',
       dashboard: d.matching.hiresInOpen,
-      source: Object.keys(openHeadcountFallback).reduce((s, c) => s + (toTableByCode[c]?.filled || 0), 0),
-      note: "TO_Table '매칭' 자리 수",
+      // 대시보드는 Total TO 가 있는 공고만 Matches 를 쓰고 나머지는 파이프라인 final_passed 폴백 →
+      // 같은 규칙으로 재집계해야 대조가 유효하다
+      source: Object.keys(openHeadcountFallback).reduce(
+        (s, c) => s + (toTableByCode[c]?.to ? toTableByCode[c].filled : fpByCode[c] || 0),
+        0,
+      ),
+      note: 'Matching Status Matches 열 (미등재 공고는 파이프라인 final_passed 폴백)',
     },
     { name: '재직 중 (귀속)', dashboard: d.headline.working, source: empIng, note: 'Employee Ing ∩ 파이프라인' },
     { name: '입사자 시트 귀속 인원', dashboard: d.headline.working + d.headline.left, source: empAttributed, note: `Employee 전체 ${empTotal}명 중 귀속` },

@@ -227,7 +227,7 @@ export const jdView = (j: JdRow): JdView | null =>
   j.health == null ? null : j.headcount != null && j.hiresAll >= j.headcount ? 'done' : j.health
 
 export const HEALTH_META: Record<JdView, { label: string; desc: string }> = {
-  done: { label: '충원 완료', desc: 'TO 자리를 다 채운 공고 (KTC Ops TO_Table 매칭 기준 — 이탈하면 다시 빈자리) — 모집 마감·공고 내리기 대상' },
+  done: { label: '충원 완료', desc: 'TO 자리를 다 채운 공고 (KTC Ops Matching Status 의 Matches 기준 — 이탈하면 다시 빈자리) — 모집 마감·공고 내리기 대상' },
   good: { label: '순항', desc: '면접·오퍼 진행 중 / 기업 검토 중(입사 이력이 있거나 모집 6주 미만인 공고)' },
   stall: { label: '정체', desc: '멈춘 공고 — 모집 6주가 지나도록 기업 반응(면접 전환)이 한 번도 없거나, 기업 단계에 아무도 없이 내부에만 쌓여 있음' },
   low: { label: '지원 부족', desc: 'TO 1명당 지원 30건 미만 — 입사가 성사된 공고들의 실측 하위 수준 (TO당 최소 17 ~ 중앙값 58건)' },

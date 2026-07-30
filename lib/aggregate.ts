@@ -12,6 +12,7 @@
 //  - salarymap Supabase `user_profiles`     → FYI 인재풀 (이력서 등록/공개)
 //  - Master 시트 `JD EXECUTION` → 공고 원장 (INTERVIEW 탭은 폐지된 자체 인터뷰 기록이라 미사용)
 //  - KTC Ops 시트 `Employee`/`매출현황`      → 입사·재직·매출·이익
+//  - KTC Ops 시트 `Matching Status`          → 공고별 TO·충원(Matches)·이탈 (미완성인 TO_Table_수정 대체, 07-30)
 //  - 비용 시트 (통합 비교표/invoice/캠페인별/LINKEDIN) → 채널별 지출 (KRW)
 //
 // 집계 규칙은 salarymap pages/api/admin/ktc-jd-funnel.js 이식 + 현행 상태값 보정.
@@ -344,9 +345,10 @@ async function fetchRaw(): Promise<Raw> {
   }, 0)
   // INTERVIEW 탭은 더 이상 읽지 않는다 — 폐지된 자체 폰 인터뷰 기록이라 면접 집계에서 제외 (2026-07-28)
   const pMaster = grab('Master 시트(공고)', () => batchGet(MASTER_SHEET_ID, ["'JD EXECUTION'!A1:N"]), [[]])
-  // TO_Table_수정 = TO 단위 원장 (TO 1개당 1행, 현재 상태 매칭/진행중/이탈). 운영이 관리하는 정본이라
-  // TO·충원은 이걸 따른다 — JD EXECUTION 의 Headcount 열은 갱신이 밀려 11건이 어긋나 있었다 (2026-07-28)
-  const pOps = grab('KTC Ops 시트(입사·매출·TO)', () => batchGet(KTC_OPS_SHEET_ID, ["'Employee'!A1:T", "'매출현황'!A1:N", "'TO_Table_수정'!A1:R"]), [[], [], []])
+  // Matching Status = 공고 단위 매칭 원장 (1행 = 공고 1건, Total TO / Matches / 이탈 열).
+  // 운영이 관리하는 정본이라 TO·충원은 이걸 따른다 — JD EXECUTION 의 Headcount 열은 갱신이 밀려
+  // 11건이 어긋나 있었다 (2026-07-28). 2026-07-30 에 TO_Table_수정 → Matching Status 로 교체.
+  const pOps = grab('KTC Ops 시트(입사·매출·TO)', () => batchGet(KTC_OPS_SHEET_ID, ["'Employee'!A1:T", "'매출현황'!A1:N", "'Matching Status'!A1:BD"]), [[], [], []])
 
   // FYI(KTC 공고) 지원자 — salarymap 라이브. 공고 제목도 함께 가져와 공고별 귀속에 쓴다
   // (FYI 직접 지원은 시트 탭에 없어서, 제목 매칭 없이는 공고별 '지원'에서 통째로 빠진다 —
@@ -898,38 +900,50 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       return b.people - a.people
     })
 
-  // ── TO 원장 (KTC Ops `TO_Table_수정`) — TO 1행 = 채용 자리 1개 ────
-  // 대표 확인(2026-07-28): TO·채용 현황의 정본은 이 탭이다. JD EXECUTION 의 Headcount 는
-  // 갱신이 밀려 11건 어긋나 있었고, 파이프라인 final_passed 는 이탈해도 그대로 남아
-  // 이탈자(LM1001·NX501 등)를 계속 입사로 세고 있었다.
-  // 열은 헤더 이름으로 해석 (이 시트들은 컬럼이 자주 이동한다 — 인덱스 하드코딩 금지)
-  const toByCode: Record<string, { to: number; filled: number; dropped: number; ongoing: number; responded: boolean }> = {}
+  // ── TO·충원 원장 (KTC Ops `Matching Status`) — 1행 = 공고 1건 ────
+  // 2026-07-30 교체: 이전엔 `TO_Table_수정` 탭(1행 = 자리 1개)을 읽었지만 그 탭은 미완성이라
+  // 참조 금지 (대표 지시). 운영이 실제로 관리하는 정본은 `Matching Status` — 같은 스프레드시트의
+  // `Dashboard` 탭 요약(TO 122 · Matches 47 · 전환률 38.5%)이 이 탭에서 그대로 나온다.
+  // 진행 중 공고로 두 탭을 대조하면 충원은 동일(6명)이고 TO 는 36→38 (TO_Table 에 없던
+  // MPNX2801·NA3401·OP2701 이 채워진 것) — 즉 교체로 커버리지만 넓어진다.
+  //
+  // 열은 헤더 이름으로 해석 (이 시트들은 컬럼이 자주 이동한다 — 인덱스 하드코딩 금지).
+  // 헤더 셀에 줄바꿈이 섞여 있어(`Total⏎TO`, `VN⏎Code`) 공백으로 정규화해 찾는다.
+  const toByCode: Record<string, { to: number; filled: number; dropped: number; responded: boolean }> = {}
   {
-    const hIdx = toSheet.findIndex((r: any[]) => (r || []).some((c: any) => /vn\s*code/i.test(String(c || ''))))
+    const norm = (c: any) => String(c || '').replace(/\n/g, ' ').trim()
+    const hIdx = toSheet.findIndex((r: any[]) => (r || []).some((c: any) => /vn\s*code/i.test(norm(c))))
     if (hIdx >= 0) {
       const H: any[] = toSheet[hIdx]
       const col = (re: RegExp, fallback: number) => {
-        const i = H.findIndex((h: any) => re.test(String(h || '').trim()))
+        const i = H.findIndex((h: any) => re.test(norm(h)))
         return i >= 0 ? i : fallback
       }
-      const cCode = col(/vn\s*code/i, 2)
-      const cState = col(/현재\s*상태/, 5)
-      const cIv = col(/인터뷰\s*완료/, 10)
-      const cMatch = col(/^매칭$/, 11)
+      const cCode = col(/^vn\s*code$/i, 6)
+      const cTo = col(/^total\s*to$/i, 22)
+      const cMatch = col(/^matches$/i, 24)
+      const cDrop = col(/^이탈$/, 47)
+      const cIv = col(/^인터뷰\s*완료$/, 42)
+      const cM1 = col(/^매칭\s*1$/, 43)
+      const toNum = (v: any) => {
+        const n = parseInt(String(v ?? '').replace(/[^0-9-]/g, ''))
+        return Number.isFinite(n) ? n : 0
+      }
       for (const r of toSheet.slice(hIdx + 1)) {
+        // 공고코드 형태만 인정 — 이 탭에는 합계 행, 테스트 행, 그리고 공고코드가 없는
+        // VN 트랙 행(Kocham·LIKELION VN 등)이 섞여 있다. 소문자 코드(smg3101)도 있어 대문자로 맞춘다.
         const code = String((r || [])[cCode] || '').trim().toUpperCase()
-        if (!code) continue
-        const b = toByCode[code] || (toByCode[code] = { to: 0, filled: 0, dropped: 0, ongoing: 0, responded: false })
-        const state = String(r[cState] || '').trim()
-        b.to++
-        if (state === '매칭') b.filled++
-        else if (state === '이탈') b.dropped++
-        else if (state === '진행중') b.ongoing++
-        // 기업 반응 이력 = 기업 면접까지 갔거나 매칭된 적 있는 자리 (이탈로 끝났어도 반응은 있었던 것)
-        if (String(r[cIv] || '').trim() || String(r[cMatch] || '').trim()) b.responded = true
+        if (!/^[A-Z]{2,6}\d{3,4}$/.test(code)) continue
+        const b = toByCode[code] || (toByCode[code] = { to: 0, filled: 0, dropped: 0, responded: false })
+        // 재게시 등으로 같은 코드가 여러 행일 수 있어 합산
+        b.to += toNum(r[cTo])
+        b.filled += toNum(r[cMatch])
+        b.dropped += toNum(r[cDrop])
+        // 기업 반응 이력 = 기업 인터뷰 완료일이나 첫 매칭일이 찍힌 공고 (이탈로 끝났어도 반응은 있었던 것)
+        if (String(r[cIv] || '').trim() || String(r[cM1] || '').trim()) b.responded = true
       }
     } else if (toSheet.length) {
-      raw.warnings.push('KTC Ops TO_Table_수정 헤더(VN Code)를 찾지 못해 TO 는 JD 원장 Headcount 로 폴백')
+      raw.warnings.push('KTC Ops Matching Status 헤더(VN Code)를 찾지 못해 TO 는 JD 원장 Headcount 로 폴백')
     }
   }
 
@@ -941,9 +955,12 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       const agg = perJd[code] || { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0, chan: {} as Record<string, number> }
       const status = String(r[JC.status] || '').trim()
       const open = !CLOSED_RE.test(status)
-      // TO·충원은 TO 원장 우선, 원장에 없는 공고만 JD EXECUTION Headcount 폴백
+      // TO·충원은 매칭 원장 우선, 원장에 없는 공고만 JD EXECUTION Headcount 폴백.
+      // 행 수를 세던 옛 탭과 달리 Total TO 는 숫자 칸이라 빈칸일 수 있다 → 0이면 원장에 없는 것으로 본다
+      // (그런 공고는 TO 도 충원도 폴백으로 넘겨, TO 는 있는데 충원만 0으로 남는 어긋남을 막는다).
       const toRow = toByCode[code.toUpperCase()]
-      const headcount = toRow ? toRow.to : parseInt(r[JC.headcount]) || null
+      const hasTo = toRow != null && toRow.to > 0
+      const headcount = hasTo ? toRow.to : parseInt(r[JC.headcount]) || null
       const dropped = toRow ? toRow.dropped : 0
 
       // 판정 재료는 누적/현재 상태 기준 (기간 보기여도 판정은 안 바뀐다)
@@ -956,9 +973,9 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       const curPassed = cur.passed || 0
       const curReady = cur.ready_to_forward || 0
       const curInternal = curNew + curPassed + curReady
-      // 충원 = TO 원장의 '매칭' 자리 수 (이탈은 빈자리로 되돌아간다).
+      // 충원 = 매칭 원장의 Matches (이탈은 빈자리로 되돌아간다).
       // 파이프라인 final_passed 는 이탈 후에도 그대로 남아 실제 충원보다 부풀려져 있었다.
-      const hiresAll = toRow ? toRow.filled : cur.final_passed || 0
+      const hiresAll = hasTo ? toRow.filled : cur.final_passed || 0
       const startDate = parseReceived(r[JC.received], all.firstApp, fetchedAt) || (all.firstApp ? all.firstApp.slice(0, 10) : null)
       const days = startDate ? Math.max(0, Math.round((fetchedAt - new Date(`${startDate}T00:00:00+07:00`).getTime()) / 86400000)) : null
 
@@ -970,7 +987,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       if (open) {
         if (headcount != null && hiresAll >= headcount) health = 'good' // 충원 완료
         else if (curOffer + curInterview > 0) health = 'good' // 면접·오퍼 진행 중
-        // 반응 이력 = TO 원장에 기업 면접 완료·매칭 기록이 있는 공고 (이탈로 끝났어도 기업은 반응했다)
+        // 반응 이력 = 매칭 원장에 기업 인터뷰 완료·매칭 날짜가 찍힌 공고 (이탈로 끝났어도 기업은 반응했다)
         else if (curCompany > 0 && (toRow?.responded || hiresAll > 0)) health = 'good'
         else if (curCompany > 0 && days != null && days < NO_RESPONSE_DAYS) health = 'good' // 검토 중 (첫 반응 대기)
         else if (days != null && days < EARLY_DAYS) health = 'early'
@@ -1126,8 +1143,9 @@ const getCachedByPeriod = unstable_cache(
       '30d': computeFromRaw(raw, '30d', at),
     }
   },
-  // v15 는 점검 탭 작업(별도 세션)이 선점한 적 있어 건너뜀 — Data Cache 는 배포로 안 비워져 재사용 위험
-  ['staffing-master-data-v21'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  // v15·v21·v22 는 별도 세션(점검 탭 / feat/audit-check-tab 브랜치)이 선점해 건너뜀 —
+  // Data Cache 는 배포로 안 비워지므로 같은 키를 쓰면 MasterData 모양이 다른 옛 스냅숏이 되돌아온다
+  ['staffing-master-data-v23'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

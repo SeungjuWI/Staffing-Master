@@ -26,9 +26,11 @@ const KTC_SUPPORT = 'https://ktc-support.vercel.app'
 
 // 말풍선 한 줄 → 열어볼 링크. 탭 이름이 정확히 없으면 부분 일치(비용 시트 탭명 변동 대응),
 // 그래도 없으면 스프레드시트 첫 화면으로 보낸다. 링크 정보가 없으면 null (평문 표시).
-export function srcHref(links: Record<string, string>, line: SrcLine): string | null {
+export function srcHref(links: Record<string, string> | undefined, line: SrcLine): string | null {
   if (line.url) return line.url
-  if (!line.sheet) return null
+  // links 가 없을 수 있다: 데모 모드, 시트 조회 실패, 그리고 캐시 키가 겹친 옛 스냅숏(sheetLinks 없음).
+  // 그런 경우엔 링크 없이 평문으로 보여주는 게 맞다 — 여기서 터지면 화면 전체가 죽는다.
+  if (!links || !line.sheet) return null
   const pre = `${line.sheet}|`
   if (line.tab) {
     const exact = links[pre + line.tab]
@@ -58,8 +60,8 @@ const SRC_DEFS = {
     lines: [{ k: 'sheet', sys: 'Master 시트 › JD EXECUTION 탭', loc: '— Job Status 열 원문 (마감 여부는 이 문구로 판별)', sheet: 'master', tab: 'JD EXECUTION' }],
   },
   'jd.to': {
-    lines: [{ k: 'sheet', sys: 'KTC Ops 시트 › TO_Table_수정 탭', loc: '— 공고코드(VN Code)별 행 수 (1행 = 채용 자리 1개)', sheet: 'ops', tab: 'TO_Table_수정' }],
-    note: 'TO_Table 에 없는 공고만 JD EXECUTION 의 Headcount 열로 폴백',
+    lines: [{ k: 'sheet', sys: 'KTC Ops 시트 › Matching Status 탭', loc: "— 공고코드(VN Code) 행의 'Total TO' 열", sheet: 'ops', tab: 'Matching Status' }],
+    note: 'Matching Status 에 없는 공고만 JD EXECUTION 의 Headcount 열로 폴백',
   },
   'jd.apps': {
     lines: [
@@ -69,13 +71,13 @@ const SRC_DEFS = {
     note: '공고 귀속은 각 탭 Job ID·제목 열의 공고코드 (없으면 제목·이메일 매칭 폴백) — 숫자에 마우스를 올리면 시트/FYI 분해 표시',
   },
   'jd.filled': {
-    lines: [{ k: 'sheet', sys: 'KTC Ops 시트 › TO_Table_수정 탭', loc: "— '현재 상태' 열이 '매칭'인 자리 수", sheet: 'ops', tab: 'TO_Table_수정' }],
+    lines: [{ k: 'sheet', sys: 'KTC Ops 시트 › Matching Status 탭', loc: "— 'Matches' 열 (매칭 성사된 자리 수)", sheet: 'ops', tab: 'Matching Status' }],
     note: '이탈하면 다시 빈자리로 계산 — 파이프라인 입사(final_passed) 누적과 다를 수 있다',
   },
   'jd.fill': {
     lines: [
-      { k: 'calc', sys: '채움 ÷ TO', loc: "— 둘 다 KTC Ops TO_Table_수정 기준 ('매칭' 자리 ÷ 전체 자리)" },
-      { k: 'sheet', sys: 'KTC Ops 시트 › TO_Table_수정 탭', sheet: 'ops', tab: 'TO_Table_수정' },
+      { k: 'calc', sys: 'Matches ÷ Total TO', loc: '— 둘 다 KTC Ops Matching Status 의 같은 행에서' },
+      { k: 'sheet', sys: 'KTC Ops 시트 › Matching Status 탭', sheet: 'ops', tab: 'Matching Status' },
     ],
   },
 

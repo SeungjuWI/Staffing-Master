@@ -27,7 +27,7 @@ export type JdRow = {
   code: string           // 공고코드 (FPT401 등)
   company: string
   title: string
-  headcount: number | null // 채용 목표 인원 (TO) — KTC Ops TO_Table 행 수, 없으면 JD EXECUTION Headcount
+  headcount: number | null // 채용 목표 인원 (TO) — KTC Ops Matching Status 'Total TO', 없으면 JD EXECUTION Headcount
   status: string         // JD EXECUTION 시트 status 원문
   open: boolean          // 진행 중 여부
   apps: number           // 지원 건 (시트 탭 + FYI 라이브 — FYI 는 공고 제목 유니크 매칭으로 귀속)
@@ -38,9 +38,9 @@ export type JdRow = {
   interviews: number     // 면접 (INTERVIEW 탭)
   offer: number          // 오퍼 도달
   hires: number          // 입사 (기간 코호트 — 퍼널·표와 정합)
-  hiresAll: number       // 충원 (스톡) — KTC Ops TO_Table 의 '매칭' 자리 수. 이탈하면 다시 빈자리로 돌아간다
-  dropped: number        // 이탈한 자리 수 (TO_Table '이탈') — 채웠다가 나갔거나 매칭 전 드롭
-  responded: boolean     // 기업 반응 이력 — TO_Table 에 기업 면접 완료·매칭 기록이 있는 공고 (판정 재료)
+  hiresAll: number       // 충원 (스톡) — KTC Ops Matching Status 의 'Matches'. 이탈하면 다시 빈자리로 돌아간다
+  dropped: number        // 이탈한 자리 수 (Matching Status '이탈' 열) — 채웠다가 나갔거나 매칭 전 드롭
+  responded: boolean     // 기업 반응 이력 — Matching Status 에 기업 인터뷰 완료·매칭 날짜가 있는 공고 (판정 재료)
   startDate: string | null // 모집 시작일 (시트 Date Received, 없으면 최초 지원일) YYYY-MM-DD
   days: number | null    // 모집 시작 후 경과 일수
   peopleAll: number      // 누적 지원자 (스톡 — 기간 필터 무관)

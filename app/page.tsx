@@ -560,9 +560,9 @@ async function Dashboard({
               <div>
                 <dt>TO / 충원율</dt>
                 <dd>
-                  공고별 채용 자리 수 / 채운 자리 ÷ TO — 둘 다 <b>KTC Ops `TO_Table` 기준</b>(TO 1행 = 자리 1개,
-                  현재 상태 &lsquo;매칭&rsquo;만 채운 것으로 셈). <b>이탈하면 다시 빈자리가 됩니다.</b>
-                  TO_Table에 없는 공고만 JD EXECUTION의 Headcount 열로 폴백합니다.
+                  공고별 채용 자리 수 / 채운 자리 ÷ TO — 둘 다 <b>KTC Ops `Matching Status` 기준</b>
+                  (공고 행의 &lsquo;Total TO&rsquo; 와 &lsquo;Matches&rsquo; 열). <b>이탈하면 다시 빈자리가 됩니다.</b>
+                  Matching Status에 없는 공고만 JD EXECUTION의 Headcount 열로 폴백합니다.
                 </dd>
               </div>
               <div>
