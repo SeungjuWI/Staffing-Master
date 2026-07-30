@@ -488,7 +488,9 @@ async function Dashboard({
           <section className="section">
             <div className="section-head">
               <h2>일별 지원 건 추이</h2>
-              <span className="sub">최근 30일 · 채널별, 지원일 기준 — 그래프에 마우스를 올리면 날짜별 상세</span>
+              <span className="sub">
+                최근 30일 · 채널별, 지원일 기준 — 채널 이름을 누르면 그 채널만 보기, 그래프에 마우스를 올리면 날짜별 상세
+              </span>
             </div>
             <div className="card">
               <DailyChannelLines points={supply.daily} />
