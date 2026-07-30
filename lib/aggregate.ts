@@ -836,7 +836,9 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     candidates.filter(c => (c.pipeline_status || '') === 'final_passed').map(c => normName(c.full_name)).filter(Boolean),
   )
   const attributedHires = hires.filter(h => channelForEmailAll(h.email) || fpNames.has(normName(h.name)))
-  const excludedHires = hires.length - attributedHires.length
+  const attributedSet = new Set(attributedHires)
+  const unattributedHires = hires.filter(h => !attributedSet.has(h))
+  const excludedHires = unattributedHires.length
 
   // ── 비용 적용 (누적 전용) ──────────────────────────────────
   if (raw.cost) {
@@ -1085,6 +1087,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       jds,
       funnel,
       revenueUsd: attributedHires.reduce((s, h) => s + h.revenue, 0),
+      unattributedHires: unattributedHires.map(h => ({ company: h.company, name: h.name, revenue: h.revenue })),
       closedRe: CLOSED_RE,
     }),
   }
@@ -1115,7 +1118,8 @@ const getCachedByPeriod = unstable_cache(
   },
   // v15 는 점검 탭 작업(별도 세션)이 선점한 적 있어 건너뜀 — Data Cache 는 배포로 안 비워져 재사용 위험
   // v21: main(집계 리팩터) + 점검 탭(audit 필드) 합병 — v20 스냅샷엔 audit 이 없어 그대로 쓰면 안 된다
-  ['staffing-master-data-v21'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  // v22: TO_Table 행 판정을 공고코드 → TO ID·Code 로 교정 (매칭 28→47) + 점검 항목 개편
+  ['staffing-master-data-v22'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

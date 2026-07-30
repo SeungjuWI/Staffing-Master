@@ -30,8 +30,8 @@ function Item({ it }: { it: AuditItem }) {
       )}
       {it.codes && it.codes.length > 0 && (
         <div className="aud-codes">
-          {it.codes.slice(0, 40).map(c => (
-            <span key={c}>{c}</span>
+          {it.codes.slice(0, 40).map((c, i) => (
+            <span key={`${c}-${i}`}>{c}</span>
           ))}
           {it.codes.length > 40 && <span className="more">외 {fmtInt(it.codes.length - 40)}건</span>}
         </div>
