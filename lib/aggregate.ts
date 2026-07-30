@@ -517,9 +517,11 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
 
   // 기간 필터 — "지원일 코호트": 해당 기간에 지원한 인재의 현재 도달 단계.
   // 스톡 지표(입사 누적·재직·매출·인재풀·오픈 공고)와 비용(시간 축 없음)은 항상 누적.
+  // 30d 는 VN(UTC+7) 자정 경계로 오늘 포함 30일 — 롤링 컷(now-720h)이면 같은 VN 날짜의
+  // 지원이 시각에 따라 반쪽만 들어가 일별 차트(30 VN일 창)와 숫자가 어긋난다.
   const start: number | null =
     period === 'month' ? new Date(`${toVNMonth(new Date().toISOString())}-01T00:00:00+07:00`).getTime()
-    : period === '30d' ? Date.now() - 30 * 86400000
+    : period === '30d' ? new Date(`${toVNDay(new Date(Date.now() - 29 * 86400000).toISOString())}T00:00:00+07:00`).getTime()
     : null
   const inPeriod = (iso: string | null) => start == null || (iso != null && new Date(iso).getTime() >= start)
 
@@ -1092,7 +1094,7 @@ const getCachedByPeriod = unstable_cache(
     }
   },
   // v15 는 점검 탭 작업(별도 세션)이 선점한 적 있어 건너뜀 — Data Cache 는 배포로 안 비워져 재사용 위험
-  ['staffing-master-data-v18'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v19'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

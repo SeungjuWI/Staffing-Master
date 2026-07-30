@@ -27,8 +27,11 @@ export function fmtMonthFull(m: string): string {
   return `${y}년 ${parseInt(mo)}월`
 }
 
+// VN(UTC+7) 기준 올해 — 서버(UTC)·보는 사람 브라우저가 어디든 연도 판정은 베트남 기준
+const vnYear = () => new Date(Date.now() + 7 * 3600000).getUTCFullYear()
+
 // 'YYYY-MM-DD' → '5월 4일' (올해가 아니면 '25년 11월 12일')
-export function fmtDay(d: string, nowYear = new Date().getFullYear()): string {
+export function fmtDay(d: string, nowYear = vnYear()): string {
   const [y, mo, day] = d.split('-').map(Number)
   return y === nowYear ? `${mo}월 ${day}일` : `${String(y).slice(2)}년 ${mo}월 ${day}일`
 }
@@ -39,9 +42,10 @@ export function fmtSinceMonth(d: string): string {
   return `${y}년 ${mo}월`
 }
 
+// 절대 시각 표기는 베트남 시간(ICT) 고정 + 라벨 — 대시보드·ATS 와 같은 기준 (스태핑 표준)
 export function fmtDateTime(iso: string): string {
   const d = new Date(iso)
-  return d.toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' })
+  return `${d.toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' })} (ICT)`
 }
 
 // 채널 키 → 화면 표기

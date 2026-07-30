@@ -39,7 +39,7 @@ export function mockData(): MasterData {
         { month: '2026-06', count: 259 }, { month: '2026-07', count: 217 },
       ],
       daily: Array.from({ length: 30 }, (_, i) => {
-        const d = new Date(Date.now() - (29 - i) * 86400000)
+        const d = new Date(Date.now() + 7 * 3600000 - (29 - i) * 86400000) // VN(UTC+7) 날짜 축
         const wave = (base: number, amp: number, phase: number) =>
           Math.max(0, Math.round(base + amp * Math.sin((i + phase) / 3) + (i % 7 === 0 ? -base * 0.6 : 0)))
         return {
