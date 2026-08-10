@@ -4,12 +4,14 @@
 // 누르는 즉시 "갱신 중…" 상태를 보여줘 연타·불안을 막는다.
 
 import { useState } from 'react'
+import { useI18n } from './i18n-provider'
 
 export function RefreshButton({ href }: { href: string }) {
+  const i = useI18n()
   const [busy, setBusy] = useState(false)
   return (
     <a className={busy ? 'refresh busy' : 'refresh'} href={href} onClick={() => setBusy(true)} aria-busy={busy}>
-      {busy ? <><span className="spin" aria-hidden /> 갱신 중…</> : '새로고침'}
+      {busy ? <><span className="spin" aria-hidden /> {i.t('btn.refreshing')}</> : i.t('btn.refresh')}
     </a>
   )
 }

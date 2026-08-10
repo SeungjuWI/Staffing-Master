@@ -1,8 +1,13 @@
 import type { FunnelStage, MonthPoint } from '@/lib/types'
-import { fmtInt, fmtMonth, fmtMonthFull, fmtPct } from '@/lib/fmt'
+import { fmtPct } from '@/lib/fmt'
+import type { I18n } from '@/lib/i18n'
+import { rich } from '@/lib/i18n-rich'
 import type { SrcKey } from '@/lib/sources'
 import { CountUp, type CountKind } from './count-up'
 import { SrcTip } from './src-tip'
+
+// 이 파일의 컴포넌트는 서버(page)·클라이언트(jd-table 등) 양쪽에서 쓰인다 —
+// 훅(useI18n) 대신 i18n 번들을 prop 으로 받는다 (라벨·unit·sub 는 호출부가 번역해 넘긴다).
 
 export function StatTile({
   label, value, num, kind, unit, sub, hero, src,
@@ -43,7 +48,11 @@ const FUNNEL_SRC: Record<string, SrcKey> = {
   hired: 'pipe.hires',
 }
 
-export function Funnel({ stages, extra }: { stages: FunnelStage[]; extra?: string }) {
+// 라벨·note 는 데이터(30분 캐시)에 구워진 값 대신 stage key 로 렌더 시점에 번역 —
+// 사전에 없는 key(옛 스냅숏의 평문 등)는 t 가 원문 그대로 돌려준다.
+const stageLabel = (i: I18n, s: FunnelStage) => (i.has(`funnel.${s.key}`) ? i.t(`funnel.${s.key}`) : s.label)
+
+export function Funnel({ i, stages, extra }: { i: I18n; stages: FunnelStage[]; extra?: string }) {
   const max = Math.max(1, ...stages.map(s => s.count))
   const first = stages[0]?.count || 0
   const last = stages[stages.length - 1]?.count || 0
@@ -51,13 +60,13 @@ export function Funnel({ stages, extra }: { stages: FunnelStage[]; extra?: strin
   return (
     <div>
       <div className="funnel">
-        {stages.map((s, i) => {
-          const prev = i > 0 ? stages[i - 1].count : null
+        {stages.map((s, idx) => {
+          const prev = idx > 0 ? stages[idx - 1].count : null
           const conv = prev ? s.count / prev : null
           return (
             <div className="frow" key={s.key}>
               <div className="flabel">
-                {s.label}
+                {stageLabel(i, s)}
                 {FUNNEL_SRC[s.key] && <SrcTip k={FUNNEL_SRC[s.key]} left />}
               </div>
               <div className="fbar-area">
@@ -66,12 +75,12 @@ export function Funnel({ stages, extra }: { stages: FunnelStage[]; extra?: strin
                   style={{
                     // 숫자 라벨 자리를 미리 빼고 막대 폭을 계산 — 라벨이 카드 밖으로 안 나가게
                     width: `calc((100% - var(--fbar-reserve, 150px)) * ${(s.count / max).toFixed(4)})`,
-                    background: FUNNEL_COLORS[i] || FUNNEL_COLORS[5],
-                    animationDelay: `${i * 90}ms`,
+                    background: FUNNEL_COLORS[idx] || FUNNEL_COLORS[5],
+                    animationDelay: `${idx * 90}ms`,
                   }}
                 />
-                <span className="fmeta" style={{ animationDelay: `${250 + i * 90}ms` }}>
-                  <span className="fval">{fmtInt(s.count)}</span>
+                <span className="fmeta" style={{ animationDelay: `${250 + idx * 90}ms` }}>
+                  <span className="fval">{i.fmtInt(s.count)}</span>
                   {conv != null && <span className="fconv">↳ {fmtPct(conv)}</span>}
                 </span>
               </div>
@@ -80,8 +89,8 @@ export function Funnel({ stages, extra }: { stages: FunnelStage[]; extra?: strin
         })}
       </div>
       <div className="funnel-note">
-        지원자 → 입사 전환율 <b>{first > 0 ? fmtPct(last / first, 2) : '–'}</b>
-        {notes.length > 0 && <> · {notes.map(n => `${n.label}: ${n.note}`).join(' · ')}</>}
+        {i.t('funnel.convLine')} <b>{first > 0 ? fmtPct(last / first, 2) : '–'}</b>
+        {notes.length > 0 && <> · {notes.map(n => `${stageLabel(i, n)}: ${i.t(n.note!)}`).join(' · ')}</>}
         {extra && <> · {extra}</>}
       </div>
     </div>
@@ -93,8 +102,8 @@ export function EmptyState({ message }: { message: string }) {
   return <div className="empty">{message}</div>
 }
 
-export function MonthlyBars({ points }: { points: MonthPoint[] }) {
-  if (!points.length) return <EmptyState message="아직 집계된 지원 데이터가 없습니다." />
+export function MonthlyBars({ i, points }: { i: I18n; points: MonthPoint[] }) {
+  if (!points.length) return <EmptyState message={i.t('monthly.empty')} />
   const max = Math.max(...points.map(p => p.count))
   const maxIdx = points.findIndex(p => p.count === max)
   const lastIdx = points.length - 1
@@ -108,10 +117,10 @@ export function MonthlyBars({ points }: { points: MonthPoint[] }) {
     const delta = prev2 && prev2.count > 0 ? prev.count / prev2.count - 1 : null
     summary = (
       <>
-        이번 달 <b>{fmtInt(cur.count)}건</b> 진행 중 · 지난달 {fmtInt(prev.count)}건
+        {rich(i.t('monthly.summary', { n: i.fmtInt(cur.count), m: i.fmtInt(prev.count) }))}
         {delta != null && (
           <>
-            {' '}(전월 대비{' '}
+            {' '}({i.t('monthly.mom')}{' '}
             <span className={delta >= 0 ? 'up' : undefined}>
               {delta >= 0 ? '+' : ''}
               {(delta * 100).toFixed(0)}%
@@ -127,24 +136,24 @@ export function MonthlyBars({ points }: { points: MonthPoint[] }) {
     <div>
       {summary && <div className="trend-summary">{summary}</div>}
       <div className="cols">
-        {points.map((p, i) => (
+        {points.map((p, idx) => (
           <div className="col" key={p.month}>
-            {(i === maxIdx || i === lastIdx) && (
-              <span className="cap" style={{ animationDelay: `${350 + i * 45}ms` }}>
-                {fmtInt(p.count)}
+            {(idx === maxIdx || idx === lastIdx) && (
+              <span className="cap" style={{ animationDelay: `${350 + idx * 45}ms` }}>
+                {i.fmtInt(p.count)}
               </span>
             )}
             <div
               className="colbar"
-              style={{ height: `${Math.max(2, (p.count / max) * 100)}%`, animationDelay: `${i * 45}ms` }}
+              style={{ height: `${Math.max(2, (p.count / max) * 100)}%`, animationDelay: `${idx * 45}ms` }}
             />
-            <span className="tip">{fmtMonthFull(p.month)} · {fmtInt(p.count)}건</span>
+            <span className="tip">{i.fmtMonthFull(p.month)} · {i.t('n.apps', { n: i.fmtInt(p.count) })}</span>
           </div>
         ))}
       </div>
       <div className="xlabels">
         {points.map(p => (
-          <span key={p.month}>{fmtMonth(p.month)}</span>
+          <span key={p.month}>{i.fmtMonth(p.month)}</span>
         ))}
       </div>
     </div>
@@ -152,7 +161,7 @@ export function MonthlyBars({ points }: { points: MonthPoint[] }) {
 }
 
 // done = TO 를 다 채운 공고 — % 대신 "완료"로 못박고, 초과 채용일 때만 실제 %를 흐리게 병기
-export function Meter({ ratio, done = false }: { ratio: number | null; done?: boolean }) {
+export function Meter({ i, ratio, done = false }: { i: I18n; ratio: number | null; done?: boolean }) {
   if (ratio == null) return <span className="dim">–</span>
   const pct = Math.min(1, Math.max(0, ratio))
   return (
@@ -162,7 +171,7 @@ export function Meter({ ratio, done = false }: { ratio: number | null; done?: bo
       </span>
       {done ? (
         <span className="pct done">
-          완료{ratio > 1 && <em>{Math.round(ratio * 100)}%</em>}
+          {i.t('meter.done')}{ratio > 1 && <em>{Math.round(ratio * 100)}%</em>}
         </span>
       ) : (
         <span className="pct">{Math.round(ratio * 100)}%</span>

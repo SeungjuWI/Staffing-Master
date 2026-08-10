@@ -1,7 +1,11 @@
 import type { Channel, CompanyPerf, JdHealth, JdRow } from '@/lib/types'
-import { ACTION_LABEL, ACTION_PREV_LABEL, CHANNEL_KIND_LABELS, channelKind, channelLabel, fmtDay, fmtInt, fmtKrw, fmtUsd } from '@/lib/fmt'
+import { channelKind } from '@/lib/fmt'
+import type { I18n } from '@/lib/i18n'
 import { EmptyState } from './viz'
 import { SrcTip } from './src-tip'
+
+// 이 파일은 서버(page)에서 렌더되지만 HEALTH_META 등 상수는 클라이언트(jd-table)도 가져다 쓴다 —
+// 라벨·설명은 i18n 키로 두고 각 사용처가 자기 번들(t)로 푼다.
 
 // ── 채널 판정 어휘 — "뭐가 성과 좋고 나쁜지"의 즉답. 공고 판정(JdHealth)과 같은 점 어휘를 쓴다.
 //  성과   입사를 만들었고 비용도 정상 범위 (무비용 포함)
@@ -12,10 +16,10 @@ import { SrcTip } from './src-tip'
 type ChannelHealth = 'good' | 'pricey' | 'burn' | 'idle'
 const CH_ORDER: ChannelHealth[] = ['good', 'pricey', 'burn', 'idle']
 export const CHANNEL_HEALTH_META: Record<ChannelHealth, { label: string; dot: string; desc: string }> = {
-  good: { label: '성과', dot: 'good', desc: '입사를 만들어낸 채널 — 채용당 비용도 전체 평균의 3배 미만 (무비용 채널 포함)' },
-  pricey: { label: '고비용', dot: 'stall', desc: '입사는 있지만 채용당 비용이 전체 평균의 3배 이상 — 단가 협상 또는 집행 축소 검토' },
-  burn: { label: '점검', dot: 'low', desc: '지출은 있는데 입사가 아직 0명 — 집행을 계속할지 점검 필요' },
-  idle: { label: '관망', dot: 'early', desc: '지출 없는 채널, 입사 아직 0명 — 비용 부담 없이 지원자만 유입되는 중' },
+  good: { label: 'chHealth.good', dot: 'good', desc: 'chHealth.good.desc' },
+  pricey: { label: 'chHealth.pricey', dot: 'stall', desc: 'chHealth.pricey.desc' },
+  burn: { label: 'chHealth.burn', dot: 'low', desc: 'chHealth.burn.desc' },
+  idle: { label: 'chHealth.idle', dot: 'early', desc: 'chHealth.idle.desc' },
 }
 
 // 전체 평균 채용당 비용 = 총지출 ÷ 총입사 (헤드라인과 같은 전 채널 기준)
@@ -32,12 +36,19 @@ function channelHealth(c: Channel, avg: number | null): ChannelHealth {
 }
 
 // 판정 이유 한 줄 — 호버 툴팁 (해당 채널의 실제 숫자로)
-function channelNote(c: Channel, h: ChannelHealth, avg: number | null): string {
-  if (h === 'good') return c.costPerHireKrw != null ? `입사 ${fmtInt(c.hires)}명 · 채용당 ${fmtKrw(c.costPerHireKrw)}` : `입사 ${fmtInt(c.hires)}명 · 지출 없음`
+function channelNote(i: I18n, c: Channel, h: ChannelHealth, avg: number | null): string {
+  if (h === 'good')
+    return c.costPerHireKrw != null
+      ? i.t('chNote.good', { n: i.fmtInt(c.hires), v: i.fmtKrw(c.costPerHireKrw) })
+      : i.t('chNote.goodNoSpend', { n: i.fmtInt(c.hires) })
   if (h === 'pricey')
-    return `채용당 ${fmtKrw(c.costPerHireKrw)} — 전체 평균 ${fmtKrw(avg)}의 ${fmtInt(Math.round((c.costPerHireKrw || 0) / (avg || 1)))}배, 집행 단가 재검토 필요`
-  if (h === 'burn') return `지출 ${fmtKrw(c.spendKrw)}을 썼는데 입사 아직 0명 — 집행을 계속할지 점검 필요`
-  return `비용 없이 지원자 ${fmtInt(c.people)}명 유입 — 입사는 아직 0명 (잃는 것 없음)`
+    return i.t('chNote.pricey', {
+      v: i.fmtKrw(c.costPerHireKrw),
+      a: i.fmtKrw(avg),
+      x: i.fmtInt(Math.round((c.costPerHireKrw || 0) / (avg || 1))),
+    })
+  if (h === 'burn') return i.t('chNote.burn', { v: i.fmtKrw(c.spendKrw) })
+  return i.t('chNote.idle', { n: i.fmtInt(c.people) })
 }
 
 // 유료/자사/무료 분류가 있는 채널 = 지금 운영하는 채널. 분류 없는 경로(구 시트·구글폼·채널 미상 등)는
@@ -49,12 +60,12 @@ const isActiveChannel = (c: Channel) => channelKind(c.key) != null
 const FYI_PIN = ['FYI-post', 'FYI-pre', 'FYI'] // 'FYI' 는 시대 분리 전 데이터(데모 등) 호환
 const fyiPin = (key: string) => { const i = FYI_PIN.indexOf(key); return i < 0 ? FYI_PIN.length : i }
 const FYI_ERA_NOTE: Record<string, string> = {
-  'FYI-post': `${ACTION_LABEL}부터의 FYI 지원 — KTC 공고만 남긴 새 집계 (가짜 공고 정리 후 0에서 새로 시작) · 광고비도 이 날짜부터 집행분만`,
-  'FYI-pre': `~${ACTION_PREV_LABEL} 의 FYI 지원 — KTC 외 공고가 섞여 있던 시기의 혼합 집계 · 일자가 없는 옛 지출도 이 행에 귀속`,
+  'FYI-post': 'fyiEra.post',
+  'FYI-pre': 'fyiEra.pre',
 }
 
 // 섹션 헤드용 판정 요약 칩 — 기준 설명 툴팁 겸 범례 (기간 보기에서는 비용이 없어 렌더하지 않음)
-export function ChannelHealthSummary({ channels }: { channels: Channel[] }) {
+export function ChannelHealthSummary({ i, channels }: { i: I18n; channels: Channel[] }) {
   const active = channels.filter(isActiveChannel)
   if (!active.some(c => c.spendKrw != null)) return null
   const avg = avgCostPerHire(channels)
@@ -65,8 +76,8 @@ export function ChannelHealthSummary({ channels }: { channels: Channel[] }) {
         return (
           <span key={h} className={n > 0 ? 'hs' : 'hs zero'}>
             <i className={`jdot ${CHANNEL_HEALTH_META[h].dot}`} />
-            {CHANNEL_HEALTH_META[h].label} <b>{fmtInt(n)}</b>
-            <span className="tip" role="tooltip">{CHANNEL_HEALTH_META[h].desc}</span>
+            {i.t(CHANNEL_HEALTH_META[h].label)} <b>{i.fmtInt(n)}</b>
+            <span className="tip" role="tooltip">{i.t(CHANNEL_HEALTH_META[h].desc)}</span>
           </span>
         )
       })}
@@ -86,21 +97,21 @@ const CH_COLGROUP = (
     <col style={{ width: '11%' }} />
   </colgroup>
 )
-const CH_THEAD = (
+const chThead = (i: I18n) => (
   <tr>
-    <th>채널<SrcTip k="ch.channel" left /></th>
-    <th>지원자<SrcTip k="ch.people" /></th>
-    <th>스크리닝 합격<SrcTip k="pipe.docPass" /></th>
-    <th>면접<SrcTip k="pipe.interviews" /></th>
-    <th>입사<SrcTip k="pipe.hires" /></th>
-    <th>지출<SrcTip k="ch.spend" /></th>
-    <th>지원자당 비용<SrcTip k="ch.cpa" /></th>
-    <th>채용당 비용<SrcTip k="ch.cph" /></th>
+    <th>{i.t('th.channel')}<SrcTip k="ch.channel" left /></th>
+    <th>{i.t('th.people')}<SrcTip k="ch.people" /></th>
+    <th>{i.t('th.docPass')}<SrcTip k="pipe.docPass" /></th>
+    <th>{i.t('th.interviews')}<SrcTip k="pipe.interviews" /></th>
+    <th>{i.t('th.hires')}<SrcTip k="pipe.hires" /></th>
+    <th>{i.t('th.spend')}<SrcTip k="ch.spend" /></th>
+    <th>{i.t('th.cpa')}<SrcTip k="ch.cpa" /></th>
+    <th>{i.t('th.cph')}<SrcTip k="ch.cph" /></th>
   </tr>
 )
 
-export function ChannelTable({ channels, spendAsOf }: { channels: Channel[]; spendAsOf?: string | null }) {
-  if (!channels.length) return <EmptyState message="이 기간에 유입된 지원 데이터가 없습니다." />
+export function ChannelTable({ i, channels, spendAsOf }: { i: I18n; channels: Channel[]; spendAsOf?: string | null }) {
+  if (!channels.length) return <EmptyState message={i.t('empty.channels')} />
   const sum = (list: Channel[], f: (c: Channel) => number) => list.reduce((s, c) => s + f(c), 0)
   // 합계는 전 채널 (과거·기타·무료 포함) — 인재풀 타일의 지원자 수와 일치해야 한다
   const totalSpend = channels.some(c => c.spendKrw != null) ? sum(channels, c => c.spendKrw || 0) : null
@@ -110,7 +121,7 @@ export function ChannelTable({ channels, spendAsOf }: { channels: Channel[]; spe
   const judged = channels.some(c => c.spendKrw != null) // 기간 보기(비용 없음)에서는 판정 점 생략
 
   // 0은 흐리게 — 성과가 난 칸만 또렷이 남는다
-  const num = (n: number) => (n === 0 ? <span className="dim">0</span> : fmtInt(n))
+  const num = (n: number) => (n === 0 ? <span className="dim">0</span> : i.fmtInt(n))
 
   const active = channels
     .filter(isActiveChannel)
@@ -127,41 +138,45 @@ export function ChannelTable({ channels, spendAsOf }: { channels: Channel[]; spe
   const shown = active.filter(c => channelKind(c.key) !== 'free')
   const free = active.filter(c => channelKind(c.key) === 'free')
   const etc = channels.filter(c => !isActiveChannel(c)).sort((a, b) => b.people - a.people)
-  const foldSub = (list: Channel[]) => `지원자 ${fmtInt(sum(list, c => c.people))}명 · 입사 ${fmtInt(sum(list, c => c.hires))}명`
+  const foldSub = (list: Channel[]) =>
+    i.t('fold.sub', { n: i.fmtInt(sum(list, c => c.people)), m: i.fmtInt(sum(list, c => c.hires)) })
 
   const row = (c: Channel) => {
     const legacy = !isActiveChannel(c)
     const kind = channelKind(c.key)
     const h = !legacy && judged ? channelHealth(c, avg) : null
     // 성과는 툴팁 없음 (숫자 열이 이미 설명) — 문제 채널(고비용·점검·관망)만 호버로 판정 이유 노출 (공고 표와 동일)
-    const note = h && h !== 'good' ? channelNote(c, h, avg) : null
+    const note = h && h !== 'good' ? channelNote(i, c, h, avg) : null
     return (
       <tr key={c.key}>
         <td className={note ? 'jdcell' : undefined}>
           {h && (
             <i
               className={`jdot ${CHANNEL_HEALTH_META[h].dot}`}
-              title={note ? undefined : `${CHANNEL_HEALTH_META[h].label} — ${channelNote(c, h, avg)}`}
+              title={note ? undefined : `${i.t(CHANNEL_HEALTH_META[h].label)} — ${channelNote(i, c, h, avg)}`}
             />
           )}
-          <span className={legacy ? 'tname dim' : 'tname'} title={legacy ? '지금은 쓰지 않는 유입 경로 — 판정 제외' : FYI_ERA_NOTE[c.key]}>
-            {channelLabel(c.key)}
+          <span
+            className={legacy ? 'tname dim' : 'tname'}
+            title={legacy ? i.t('ch.legacyTitle') : FYI_ERA_NOTE[c.key] && i.t(FYI_ERA_NOTE[c.key])}
+          >
+            {i.channelLabel(c.key)}
           </span>
-          {kind && <span className={`ck ${kind}`}>{CHANNEL_KIND_LABELS[kind]}</span>}
-          {legacy && <span className="ck past">과거</span>}
+          {kind && <span className={`ck ${kind}`}>{i.t(`kind.${kind}`)}</span>}
+          {legacy && <span className="ck past">{i.t('kind.past')}</span>}
           {note && h && (
             <span className="tip" role="tooltip">
-              <b>{CHANNEL_HEALTH_META[h].label}</b> — {note}
+              <b>{i.t(CHANNEL_HEALTH_META[h].label)}</b> — {note}
             </span>
           )}
         </td>
-        <td title={c.applications ? `지원 ${fmtInt(c.applications)}건` : undefined}>{num(c.people)}</td>
+        <td title={c.applications ? i.t('n.apps', { n: i.fmtInt(c.applications) }) : undefined}>{num(c.people)}</td>
         <td>{num(c.docPass)}</td>
         <td>{num(c.interviews)}</td>
-        <td title={c.hires > 0 ? `지원자 ${fmtInt(c.people)}명 중 입사 ${fmtInt(c.hires)}명` : undefined}>{num(c.hires)}</td>
-        <td>{c.spendKrw != null ? fmtKrw(c.spendKrw) : <span className="dim">–</span>}</td>
-        <td>{c.cpaKrw != null ? fmtKrw(c.cpaKrw) : <span className="dim">–</span>}</td>
-        <td>{c.costPerHireKrw != null ? fmtKrw(c.costPerHireKrw) : <span className="dim">–</span>}</td>
+        <td title={c.hires > 0 ? i.t('title.hiresOf', { n: i.fmtInt(c.people), m: i.fmtInt(c.hires) }) : undefined}>{num(c.hires)}</td>
+        <td>{c.spendKrw != null ? i.fmtKrw(c.spendKrw) : <span className="dim">–</span>}</td>
+        <td>{c.cpaKrw != null ? i.fmtKrw(c.cpaKrw) : <span className="dim">–</span>}</td>
+        <td>{c.costPerHireKrw != null ? i.fmtKrw(c.costPerHireKrw) : <span className="dim">–</span>}</td>
       </tr>
     )
   }
@@ -171,22 +186,22 @@ export function ChannelTable({ channels, spendAsOf }: { channels: Channel[]; spe
       <div className="tbl-scroll">
         <table className="chfix">
           {CH_COLGROUP}
-          <thead>{CH_THEAD}</thead>
+          <thead>{chThead(i)}</thead>
           <tbody>{shown.map(row)}</tbody>
           <tfoot>
             <tr>
-              <td>합계 <span className="tsub">(무료·과거 포함)</span></td>
-              <td>{fmtInt(totalPeople)}</td>
-              <td>{fmtInt(sum(channels, c => c.docPass))}</td>
-              <td>{fmtInt(sum(channels, c => c.interviews))}</td>
-              <td>{fmtInt(totalHires)}</td>
+              <td>{i.t('total.label')} <span className="tsub">{i.t('total.sub')}</span></td>
+              <td>{i.fmtInt(totalPeople)}</td>
+              <td>{i.fmtInt(sum(channels, c => c.docPass))}</td>
+              <td>{i.fmtInt(sum(channels, c => c.interviews))}</td>
+              <td>{i.fmtInt(totalHires)}</td>
               {/* 지출 0 은 "안 썼다"일 수도, "광고 원장이 아직 그 날짜까지 안 왔다"일 수도 있다 →
                   단가(CPA·채용당)는 지출이 실제로 잡힐 때만 낸다 (0원으로 단정하지 않는다) */}
-              <td title={spendAsOf ? `광고비는 ${fmtDay(spendAsOf)}까지 반영된 원장 기준 — 이후 집행분 미포함` : undefined}>
-                {totalSpend != null ? fmtKrw(totalSpend) : '–'}
+              <td title={spendAsOf ? i.t('title.spendAsOf', { d: i.fmtDay(spendAsOf) }) : undefined}>
+                {totalSpend != null ? i.fmtKrw(totalSpend) : '–'}
               </td>
-              <td>{totalSpend ? (totalPeople > 0 ? fmtKrw(totalSpend / totalPeople) : '–') : '–'}</td>
-              <td>{totalSpend ? (totalHires > 0 ? fmtKrw(totalSpend / totalHires) : '–') : '–'}</td>
+              <td>{totalSpend ? (totalPeople > 0 ? i.fmtKrw(totalSpend / totalPeople) : '–') : '–'}</td>
+              <td>{totalSpend ? (totalHires > 0 ? i.fmtKrw(totalSpend / totalHires) : '–') : '–'}</td>
             </tr>
           </tfoot>
         </table>
@@ -194,11 +209,11 @@ export function ChannelTable({ channels, spendAsOf }: { channels: Channel[]; spe
 
       {free.length > 0 && (
         <details className="fold">
-          <summary>무료 채널 {fmtInt(free.length)}개 보기 <span className="tsub">· {foldSub(free)}</span></summary>
+          <summary>{i.t('fold.free', { n: i.fmtInt(free.length) })} <span className="tsub">· {foldSub(free)}</span></summary>
           <div className="tbl-scroll">
             <table className="chfix">
               {CH_COLGROUP}
-              <thead>{CH_THEAD}</thead>
+              <thead>{chThead(i)}</thead>
               <tbody>{free.map(row)}</tbody>
             </table>
           </div>
@@ -206,11 +221,11 @@ export function ChannelTable({ channels, spendAsOf }: { channels: Channel[]; spe
       )}
       {etc.length > 0 && (
         <details className="fold">
-          <summary>과거 유입 경로 {fmtInt(etc.length)}개 보기 <span className="tsub">· {foldSub(etc)}</span></summary>
+          <summary>{i.t('fold.legacy', { n: i.fmtInt(etc.length) })} <span className="tsub">· {foldSub(etc)}</span></summary>
           <div className="tbl-scroll">
             <table className="chfix">
               {CH_COLGROUP}
-              <thead>{CH_THEAD}</thead>
+              <thead>{chThead(i)}</thead>
               <tbody>{etc.map(row)}</tbody>
             </table>
           </div>
@@ -231,16 +246,16 @@ export const jdView = (j: JdRow): JdView | null =>
   j.health == null ? null : j.headcount != null && j.hiresAll >= j.headcount ? 'done' : j.health
 
 export const HEALTH_META: Record<JdView, { label: string; desc: string }> = {
-  done: { label: '충원 완료', desc: 'TO 자리를 다 채운 공고 (KTC Ops Matching Status 의 Matches 기준 — 이탈하면 다시 빈자리) — 모집 마감·공고 내리기 대상' },
-  good: { label: '순항', desc: '면접·오퍼 진행 중 / 기업 검토 중(입사 이력이 있거나 모집 6주 미만인 공고)' },
-  stall: { label: '정체', desc: '멈춘 공고 — 모집 6주가 지나도록 기업 반응(면접 전환)이 한 번도 없거나, 기업 단계에 아무도 없이 내부에만 쌓여 있음' },
-  low: { label: '지원 부족', desc: 'TO 1명당 지원 30건 미만 — 입사가 성사된 공고들의 실측 하위 수준 (TO당 최소 17 ~ 중앙값 58건)' },
-  early: { label: '모집 초기', desc: '모집 시작 1주 미만 — 아직 판정하지 않음 (유예)' },
+  done: { label: 'health.done', desc: 'health.done.desc' },
+  good: { label: 'health.good', desc: 'health.good.desc' },
+  stall: { label: 'health.stall', desc: 'health.stall.desc' },
+  low: { label: 'health.low', desc: 'health.low.desc' },
+  early: { label: 'health.early', desc: 'health.early.desc' },
 }
 export const HEALTH_ORDER: JdView[] = ['done', 'good', 'stall', 'low', 'early']
 
 // 섹션 헤드용 판정 요약 — "뭐가 잘되고 뭐가 안되는지"의 즉답 한 줄
-export function JdHealthSummary({ jds }: { jds: JdRow[] }) {
+export function JdHealthSummary({ i, jds }: { i: I18n; jds: JdRow[] }) {
   return (
     <span className="hsum">
       {HEALTH_ORDER.map(h => {
@@ -248,8 +263,8 @@ export function JdHealthSummary({ jds }: { jds: JdRow[] }) {
         return (
           <span key={h} className={n > 0 ? 'hs' : 'hs zero'}>
             <i className={`jdot ${h}`} />
-            {HEALTH_META[h].label} <b>{fmtInt(n)}</b>
-            <span className="tip" role="tooltip">{HEALTH_META[h].desc}</span>
+            {i.t(HEALTH_META[h].label)} <b>{i.fmtInt(n)}</b>
+            <span className="tip" role="tooltip">{i.t(HEALTH_META[h].desc)}</span>
           </span>
         )
       })}
@@ -259,31 +274,31 @@ export function JdHealthSummary({ jds }: { jds: JdRow[] }) {
 
 // JdTable 은 컬럼 정렬(클라이언트 상호작용)이 필요해 components/jd-table.tsx 로 분리됨
 
-export function CompanyTable({ companies }: { companies: CompanyPerf[] }) {
-  if (!companies.length) return <EmptyState message="아직 파이프라인 경유 입사 실적이 없습니다." />
+export function CompanyTable({ i, companies }: { i: I18n; companies: CompanyPerf[] }) {
+  if (!companies.length) return <EmptyState message={i.t('empty.companies')} />
   return (
     <div className="tbl-scroll">
       <table>
         <thead>
           <tr>
-            <th>기업<SrcTip k="co.company" left /></th>
-            <th>입사<SrcTip k="co.hires" /></th>
-            <th>재직 중<SrcTip k="co.working" /></th>
-            <th>총 매출<SrcTip k="co.revenue" /></th>
-            <th>이익<SrcTip k="co.profit" /></th>
+            <th>{i.t('th.company')}<SrcTip k="co.company" left /></th>
+            <th>{i.t('th.hires')}<SrcTip k="co.hires" /></th>
+            <th>{i.t('th.working')}<SrcTip k="co.working" /></th>
+            <th>{i.t('th.revenue')}<SrcTip k="co.revenue" /></th>
+            <th>{i.t('th.profit')}<SrcTip k="co.profit" /></th>
           </tr>
         </thead>
         <tbody>
           {companies.map(c => (
             <tr key={c.company}>
               <td className="tname">{c.company}</td>
-              <td>{fmtInt(c.hires)}</td>
+              <td>{i.fmtInt(c.hires)}</td>
               <td>
-                {fmtInt(c.working)}
-                {c.working < c.hires && <span className="tsub"> (이탈 {fmtInt(c.hires - c.working)})</span>}
+                {i.fmtInt(c.working)}
+                {c.working < c.hires && <span className="tsub"> {i.t('td.left', { n: i.fmtInt(c.hires - c.working) })}</span>}
               </td>
-              <td>{c.revenueUsd > 0 ? fmtUsd(c.revenueUsd) : <span className="dim">{fmtUsd(c.revenueUsd)}</span>}</td>
-              <td className={c.profitUsd < 0 ? 'neg' : undefined}>{fmtUsd(c.profitUsd)}</td>
+              <td>{c.revenueUsd > 0 ? i.fmtUsd(c.revenueUsd) : <span className="dim">{i.fmtUsd(c.revenueUsd)}</span>}</td>
+              <td className={c.profitUsd < 0 ? 'neg' : undefined}>{i.fmtUsd(c.profitUsd)}</td>
             </tr>
           ))}
         </tbody>

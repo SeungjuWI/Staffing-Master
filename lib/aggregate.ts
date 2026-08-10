@@ -1157,7 +1157,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     { key: 'people', label: '지원자', count: candidatesTotal },
     { key: 'screened', label: '스크리닝 합격', count: screenPass },
     { key: 'delivered', label: '기업 전달', count: delivered },
-    { key: 'interview', label: '면접', count: interviewPipe, note: '기업 면접 — 면접 후 탈락자는 상태 이력이 없어 미포함' },
+    // note 는 i18n 키 — Funnel 이 렌더 시점에 로케일로 푼다 (라벨도 key 기준 번역, label 은 폴백)
+    { key: 'interview', label: '면접', count: interviewPipe, note: 'funnel.note.interview' },
     { key: 'offer', label: '오퍼·계약', count: Math.max(offerReached, finalPassed) },
     { key: 'hired', label: '입사', count: finalPassed },
   ]

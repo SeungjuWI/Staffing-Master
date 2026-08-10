@@ -11,27 +11,30 @@
 
 import { useMemo, useRef, useState } from 'react'
 import type { DayPoint } from '@/lib/types'
-import { channelLabel, fmtDay, fmtInt } from '@/lib/fmt'
+import type { I18n } from '@/lib/i18n'
+import { rich } from '@/lib/i18n-rich'
 import { EmptyState } from './viz'
+import { useI18n } from './i18n-provider'
 
-const NAMED: { key: string; slug: string; label: string }[] = [
-  { key: 'landing-page', slug: 'landing', label: '랜딩페이지' },
-  { key: 'FYI', slug: 'fyi', label: 'FYI' },
-  { key: 'LinkedIn', slug: 'linkedin', label: 'LinkedIn' },
-  { key: 'jobs-go', slug: 'jobsgo', label: 'JobsGO' },
-  { key: 'ITviec-api', slug: 'itviec', label: 'ITviec' },
-  { key: 'top-dev', slug: 'topdev', label: 'TopDev' },
+// key: 데이터 채널 키, slug: 색 클래스 — 라벨은 i.channelLabel 로 렌더 시점에 결정
+const NAMED: { key: string; slug: string; brand?: string }[] = [
+  { key: 'landing-page', slug: 'landing' },
+  { key: 'FYI', slug: 'fyi', brand: 'FYI' }, // 차트는 짧은 브랜드명 (표의 'FYI (자체 플랫폼)' 대신)
+  { key: 'LinkedIn', slug: 'linkedin' },
+  { key: 'jobs-go', slug: 'jobsgo' },
+  { key: 'ITviec-api', slug: 'itviec' },
+  { key: 'top-dev', slug: 'topdev' },
 ]
 
 type Series = { slug: string; label: string; values: number[]; total: number; note?: string }
 
-function buildSeries(points: DayPoint[]): Series[] {
+function buildSeries(i: I18n, points: DayPoint[]): Series[] {
   const named = new Set(NAMED.map(s => s.key))
   const out: Series[] = []
   for (const s of NAMED) {
     const values = points.map(p => p.byChannel[s.key] || 0)
     const total = values.reduce((a, b) => a + b, 0)
-    if (total > 0) out.push({ slug: s.slug, label: s.label, values, total })
+    if (total > 0) out.push({ slug: s.slug, label: s.brand || i.channelLabel(s.key), values, total })
   }
   const etcKeys = new Set<string>()
   const etcValues = points.map(p => {
@@ -41,7 +44,7 @@ function buildSeries(points: DayPoint[]): Series[] {
   })
   const etcTotal = etcValues.reduce((a, b) => a + b, 0)
   if (etcTotal > 0) {
-    out.push({ slug: 'etc', label: '기타', values: etcValues, total: etcTotal, note: [...etcKeys].map(channelLabel).join(' · ') })
+    out.push({ slug: 'etc', label: i.t('common.etc'), values: etcValues, total: etcTotal, note: [...etcKeys].map(k => i.channelLabel(k)).join(' · ') })
   }
   return out
 }
@@ -59,12 +62,13 @@ function yTicks(max: number): number[] {
 const W = 860, H = 248, ML = 34, MR = 12, MT = 8, MB = 20
 
 export function DailyChannelLines({ points }: { points: DayPoint[] }) {
+  const i = useI18n()
   const [idx, setIdx] = useState<number | null>(null)
   const [pick, setPick] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
-  const series = useMemo(() => buildSeries(points), [points])
+  const series = useMemo(() => buildSeries(i, points), [points, i])
   const n = points.length
-  if (n < 2 || !series.length) return <EmptyState message="최근 30일 지원 데이터가 없습니다." />
+  if (n < 2 || !series.length) return <EmptyState message={i.t('empty.daily')} />
 
   // 고른 채널이 데이터에서 사라지면(기간·필터 변경) 조용히 전체로 되돌린다
   const sel = pick && series.some(s => s.slug === pick) ? pick : null
@@ -77,10 +81,10 @@ export function DailyChannelLines({ points }: { points: DayPoint[] }) {
   const maxVal = Math.max(1, ...shown.flatMap(s => s.values))
   const ticks = yTicks(maxVal)
   const yTop = ticks[ticks.length - 1]
-  const x = (i: number) => ML + (i * (W - ML - MR)) / (n - 1)
+  const x = (idx2: number) => ML + (idx2 * (W - ML - MR)) / (n - 1)
   const y = (v: number) => MT + (1 - v / yTop) * (H - MT - MB)
   // 보이는 채널만 합산 — 한 채널만 볼 때는 요약·툴팁·표가 모두 그 채널 숫자로 맞춰진다
-  const totals = points.map((p, i) => shown.reduce((a, s) => a + s.values[i], 0))
+  const totals = points.map((p, idx2) => shown.reduce((a, s) => a + s.values[idx2], 0))
 
   // 호버 없이도 결론이 읽히는 한 줄 (오늘은 진행 중이라 어제·7일 합 중심)
   const last7 = totals.slice(-8, -1).reduce((a, b) => a + b, 0)
@@ -92,8 +96,8 @@ export function DailyChannelLines({ points }: { points: DayPoint[] }) {
     if (!el) return
     const r = el.getBoundingClientRect()
     const vx = ((clientX - r.left) / r.width) * W
-    const i = Math.round(((vx - ML) / (W - ML - MR)) * (n - 1))
-    setIdx(Math.min(n - 1, Math.max(0, i)))
+    const at = Math.round(((vx - ML) / (W - ML - MR)) * (n - 1))
+    setIdx(Math.min(n - 1, Math.max(0, at)))
   }
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -113,18 +117,18 @@ export function DailyChannelLines({ points }: { points: DayPoint[] }) {
   return (
     <div>
       <div className="trend-summary">
-        {picked && <><b>{picked.label}</b>만 보기 · </>}
-        오늘 <b>{fmtInt(totals[n - 1])}건</b> 진행 중 · 어제 {fmtInt(totals[n - 2] || 0)}건 · 최근 7일 {fmtInt(last7)}건
+        {picked && <>{rich(i.t('daily.pickOnly', { ch: picked.label }))} · </>}
+        {rich(i.t('daily.summary', { n: i.fmtInt(totals[n - 1]), m: i.fmtInt(totals[n - 2] || 0), k: i.fmtInt(last7) }))}
         {delta != null && (
-          <> (직전 7일 대비 <span className={delta >= 0 ? 'up' : undefined}>{delta >= 0 ? '+' : ''}{(delta * 100).toFixed(0)}%</span>)</>
+          <> ({i.t('daily.wow')} <span className={delta >= 0 ? 'up' : undefined}>{delta >= 0 ? '+' : ''}{(delta * 100).toFixed(0)}%</span>)</>
         )}
-        {picked && <span className="dim"> · y축은 이 채널 기준</span>}
+        {picked && <span className="dim"> · {i.t('daily.yAxis')}</span>}
       </div>
 
       {/* 범례 = 채널 선택 (누르면 그 채널만, 다시 누르면 전체) */}
-      <div className="dlc-legend" role="group" aria-label="채널 선택 — 하나를 고르면 그 채널만 표시">
+      <div className="dlc-legend" role="group" aria-label={i.t('daily.legendAria')}>
         <button type="button" className="dlc-pick" aria-pressed={sel == null} onClick={() => setPick(null)}>
-          전체 <b>{fmtInt(series.reduce((a, s) => a + s.total, 0))}</b>
+          {i.t('daily.all')} <b>{i.fmtInt(series.reduce((a, s) => a + s.total, 0))}</b>
         </button>
         {series.map(s => (
           <button
@@ -132,11 +136,11 @@ export function DailyChannelLines({ points }: { points: DayPoint[] }) {
             type="button"
             className={`dlc-pick ch-${s.slug}`}
             aria-pressed={sel === s.slug}
-            title={s.note ? `기타 = ${s.note}` : undefined}
+            title={s.note ? i.t('daily.etcTitle', { list: s.note }) : undefined}
             onClick={() => setPick(v => (v === s.slug ? null : s.slug))}
           >
             <i className={`dlc-key ch-${s.slug}`} />
-            {s.label} <b>{fmtInt(s.total)}</b>
+            {s.label} <b>{i.fmtInt(s.total)}</b>
           </button>
         ))}
       </div>
@@ -147,11 +151,7 @@ export function DailyChannelLines({ points }: { points: DayPoint[] }) {
           className="dlc-svg"
           viewBox={`0 0 ${W} ${H}`}
           role="img"
-          aria-label={
-            one
-              ? `${one.label} 일별 지원 건 선 그래프 — 값은 아래 표 보기에서도 확인 가능`
-              : '일별 채널별 지원 건 선 그래프 — 값은 아래 표 보기에서도 확인 가능'
-          }
+          aria-label={one ? i.t('daily.ariaOne', { ch: one.label }) : i.t('daily.aria')}
           tabIndex={0}
           onPointerMove={e => move(e.clientX)}
           onPointerLeave={() => setIdx(null)}
@@ -160,12 +160,12 @@ export function DailyChannelLines({ points }: { points: DayPoint[] }) {
           {ticks.map(t => (
             <g key={t}>
               <line className="dlc-grid" x1={ML} x2={W - MR} y1={y(t)} y2={y(t)} />
-              <text className="dlc-tick" x={ML - 6} y={y(t) + 3.5}>{fmtInt(t)}</text>
+              <text className="dlc-tick" x={ML - 6} y={y(t) + 3.5}>{i.fmtInt(t)}</text>
             </g>
           ))}
-          {points.map((p, i) =>
-            i % 5 === 0 || i === n - 1 ? (
-              <text key={p.date} className="dlc-xlab" x={x(i)} y={H - 6}>
+          {points.map((p, idx2) =>
+            idx2 % 5 === 0 || idx2 === n - 1 ? (
+              <text key={p.date} className="dlc-xlab" x={x(idx2)} y={H - 6}>
                 {parseInt(p.date.slice(5, 7))}/{parseInt(p.date.slice(8, 10))}
               </text>
             ) : null,
@@ -174,14 +174,14 @@ export function DailyChannelLines({ points }: { points: DayPoint[] }) {
           {one && (
             <path
               className={`dlc-fill ch-${one.slug}`}
-              d={`${one.values.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ')} L${x(n - 1).toFixed(1)} ${y(0).toFixed(1)} L${x(0).toFixed(1)} ${y(0).toFixed(1)} Z`}
+              d={`${one.values.map((v, idx2) => `${idx2 ? 'L' : 'M'}${x(idx2).toFixed(1)} ${y(v).toFixed(1)}`).join(' ')} L${x(n - 1).toFixed(1)} ${y(0).toFixed(1)} L${x(0).toFixed(1)} ${y(0).toFixed(1)} Z`}
             />
           )}
           {shown.map(s => (
             <path
               key={s.slug}
               className={`dlc-line ch-${s.slug}`}
-              d={s.values.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ')}
+              d={s.values.map((v, idx2) => `${idx2 ? 'L' : 'M'}${x(idx2).toFixed(1)} ${y(v).toFixed(1)}`).join(' ')}
             />
           ))}
           {idx != null && (
@@ -200,13 +200,13 @@ export function DailyChannelLines({ points }: { points: DayPoint[] }) {
             style={tipLeft ? { right: `${100 - (x(idx) / W) * 100}%`, marginRight: 10 } : { left: `${(x(idx) / W) * 100}%`, marginLeft: 10 }}
           >
             <div className="dlc-tip-date">
-              {fmtDay(points[idx].date)}
-              {!one && <> · 합계 {fmtInt(totals[idx])}건</>}
+              {i.fmtDay(points[idx].date)}
+              {!one && <> · {i.t('daily.tipTotal', { n: i.fmtInt(totals[idx]) })}</>}
             </div>
             {tipRows.map(({ s, v }) => (
               <div key={s.slug} className={v === 0 ? 'dlc-tip-row dim' : 'dlc-tip-row'}>
                 <i className={`dlc-key ch-${s.slug}`} />
-                <b>{fmtInt(v)}</b>
+                <b>{i.fmtInt(v)}</b>
                 <span>{s.label}</span>
               </div>
             ))}
@@ -216,25 +216,25 @@ export function DailyChannelLines({ points }: { points: DayPoint[] }) {
 
       <details className="fold">
         <summary>
-          표로 보기 <span className="tsub">· 일별 {one ? one.label : '채널별'} 지원 건 (최근 30일)</span>
+          {i.t('daily.tableFold')} <span className="tsub">· {i.t('daily.tableFoldSub', { ch: one ? one.label : i.t('daily.byChannel') })}</span>
         </summary>
         <div className="tbl-scroll">
           <table className="dlc-table">
             <thead>
               <tr>
-                <th>날짜</th>
+                <th>{i.t('th.date')}</th>
                 {shown.map(s => <th key={s.slug}>{s.label}</th>)}
-                {!one && <th>합계</th>}
+                {!one && <th>{i.t('th.total')}</th>}
               </tr>
             </thead>
             <tbody>
-              {points.map((p, i) => (
+              {points.map((p, idx2) => (
                 <tr key={p.date}>
-                  <td>{fmtDay(p.date)}</td>
+                  <td>{i.fmtDay(p.date)}</td>
                   {shown.map(s => (
-                    <td key={s.slug}>{s.values[i] === 0 ? <span className="dim">0</span> : fmtInt(s.values[i])}</td>
+                    <td key={s.slug}>{s.values[idx2] === 0 ? <span className="dim">0</span> : i.fmtInt(s.values[idx2])}</td>
                   ))}
-                  {!one && <td>{fmtInt(totals[i])}</td>}
+                  {!one && <td>{i.fmtInt(totals[idx2])}</td>}
                 </tr>
               )).reverse()}
             </tbody>

@@ -1,6 +1,9 @@
 import { Suspense, cache } from 'react'
+import { cookies } from 'next/headers'
 import { getMasterData, type Period } from '@/lib/aggregate'
-import { ACTION_LABEL, ACTION_PREV_LABEL, fmtDateTime, fmtDay, fmtInt, fmtKrw, fmtPct, fmtSinceMonth, fmtUsd } from '@/lib/fmt'
+import { ACTION_LABEL, ACTION_PREV_LABEL, fmtPct } from '@/lib/fmt'
+import { LANG_COOKIE, getI18n, pickLocale, type I18n } from '@/lib/i18n'
+import { rich } from '@/lib/i18n-rich'
 import { Funnel, MonthlyBars, StatTile } from '@/components/viz'
 import { SrcLinkProvider, SrcTip } from '@/components/src-tip'
 import { ChannelHealthSummary, ChannelTable, CompanyTable, JdHealthSummary } from '@/components/tables'
@@ -8,27 +11,33 @@ import { JdTable } from '@/components/jd-table'
 import { DailyChannelLines } from '@/components/daily-chart'
 import { CountUp } from '@/components/count-up'
 import { RefreshButton } from '@/components/refresh-button'
+import { LangSwitch } from '@/components/lang-switch'
 
 export const dynamic = 'force-dynamic'
 
 // 개요·베트남 매칭은 아직 미완성이라 내비에서 숨김 (2026-07-29 회의) — 렌더 코드는 남겨두고
 // URL(?tab=overview 등)로는 계속 접근 가능. 완성되면 hidden 만 내리면 된다.
 const TABS = [
-  { key: 'overview', label: '개요', hidden: true },
-  { key: 'korea', label: '한국 매칭', hidden: false },
-  { key: 'vietnam', label: '베트남 매칭', hidden: true },
-  { key: 'talent', label: '인재·채널', hidden: false },
-  { key: 'glossary', label: '용어', hidden: false },
+  { key: 'overview', label: 'nav.overview', hidden: true },
+  { key: 'korea', label: 'nav.korea', hidden: false },
+  { key: 'vietnam', label: 'nav.vietnam', hidden: true },
+  { key: 'talent', label: 'nav.talent', hidden: false },
+  { key: 'glossary', label: 'nav.glossary', hidden: false },
 ] as const
 type TabKey = (typeof TABS)[number]['key']
 
-// '7/28~' = 액션 분리선 이후 (FYI 정리·KTC 집중 집행 시작일) — 월 경계로는 안 잡히는 창
+// '7/28~' = 액션 분리선 이후 (FYI 정리·KTC 집중 집행 시작일) — 월 경계로는 안 잡히는 창.
+// 라벨은 i18n 키, action 은 날짜 리터럴이라 전 로케일 공통.
 const PERIODS: { key: Period; label: string }[] = [
-  { key: 'all', label: '누적' },
+  { key: 'all', label: 'period.all' },
   { key: 'action', label: `${ACTION_LABEL}~` },
-  { key: 'month', label: '이번 달' },
-  { key: '30d', label: '최근 30일' },
+  { key: 'month', label: 'period.month' },
+  { key: '30d', label: 'period.30d' },
 ]
+const periodLabel = (i: I18n, key: Period) => {
+  const p = PERIODS.find(p => p.key === key)!
+  return p.key === 'action' ? p.label : i.t(p.label)
+}
 
 // 헤더의 "기준 시각"과 본문, 두 Suspense 경계가 데이터를 각각 부르지 않도록 요청 내 1회로 메모.
 const loadData = cache((fresh: boolean, period: Period) => getMasterData(fresh, period))
@@ -39,6 +48,7 @@ export default async function Page({
   searchParams: Promise<{ fresh?: string; tab?: string; period?: string }>
 }) {
   const sp = await searchParams
+  const i = getI18n(pickLocale((await cookies()).get(LANG_COOKIE)?.value))
   const tab: TabKey = (TABS.some(t => t.key === sp.tab) ? sp.tab : 'korea') as TabKey
   const period: Period = (PERIODS.some(p => p.key === sp.period) ? sp.period : 'all') as Period
   const fresh = sp.fresh === '1'
@@ -52,39 +62,40 @@ export default async function Page({
         <div className="topbar-in">
           <div className="brand">
             <span className="logo" aria-hidden />
-            Staffing Master<small>글로벌신사업본부</small>
+            Staffing Master<small>{i.t('brand.sub')}</small>
           </div>
           <nav className="nav">
             {TABS.filter(t => !t.hidden).map(t => (
-              <a key={t.key} className={t.key === tab ? 'on' : ''} href={q(t.key)} data-label={t.label}>
-                {t.label}
+              <a key={t.key} className={t.key === tab ? 'on' : ''} href={q(t.key)} data-label={i.t(t.label)}>
+                {i.t(t.label)}
               </a>
             ))}
           </nav>
-          <div className="pills" aria-label="기간 선택">
+          <div className="pills" aria-label={i.t('a11y.periodPick')}>
             {PERIODS.map(p => (
               <a
                 key={p.key}
                 className={p.key === period ? 'on' : ''}
                 href={`/?tab=${tab}&period=${p.key}`}
-                data-label={p.label}
+                data-label={periodLabel(i, p.key)}
               >
-                {p.label}
+                {periodLabel(i, p.key)}
               </a>
             ))}
           </div>
           <div className="meta">
-            <Suspense fallback={<span className="dim">불러오는 중…</span>}>
-              <GeneratedAt fresh={fresh} period={period} />
+            <Suspense fallback={<span className="dim">{i.t('common.loading')}</span>}>
+              <GeneratedAt i={i} fresh={fresh} period={period} />
             </Suspense>
             <RefreshButton href={`/?tab=${tab}&period=${period}&fresh=1`} />
+            <LangSwitch />
           </div>
         </div>
       </header>
 
       <div className="wrap">
-        <Suspense fallback={<DashboardSkeleton />}>
-          <Dashboard tab={tab} period={period} filtered={period !== 'all'} fresh={fresh} />
+        <Suspense fallback={<DashboardSkeleton i={i} />}>
+          <Dashboard i={i} tab={tab} period={period} filtered={period !== 'all'} fresh={fresh} />
         </Suspense>
       </div>
     </>
@@ -92,15 +103,15 @@ export default async function Page({
 }
 
 // 헤더 우측 "기준 시각" — 데이터 준비되면 채워진다.
-async function GeneratedAt({ fresh, period }: { fresh: boolean; period: Period }) {
+async function GeneratedAt({ i, fresh, period }: { i: I18n; fresh: boolean; period: Period }) {
   const data = await loadData(fresh, period)
-  return <span>{fmtDateTime(data.generatedAt)} 기준</span>
+  return <span>{i.t('asOf', { t: i.fmtDateTime(data.generatedAt) })}</span>
 }
 
 // 데이터 로딩 중 본문 자리를 지키는 스켈레톤 (레이아웃 점프 방지)
-function DashboardSkeleton() {
+function DashboardSkeleton({ i }: { i: I18n }) {
   return (
-    <div aria-busy="true" aria-label="대시보드 불러오는 중">
+    <div aria-busy="true" aria-label={i.t('a11y.dashLoading')}>
       <section className="section">
         <div className="card skel-card">
           <div className="skel-bar" style={{ width: '38%', height: 30 }} />
@@ -121,11 +132,13 @@ function DashboardSkeleton() {
 }
 
 async function Dashboard({
+  i,
   tab,
   period,
   filtered,
   fresh,
 }: {
+  i: I18n
   tab: TabKey
   period: Period
   filtered: boolean
@@ -142,21 +155,18 @@ async function Dashboard({
     <SrcLinkProvider links={data.sheetLinks}>
       {data.mode === 'mock' && (
         <div className="banner">
-          <b>데모 데이터</b> — 환경변수(.env.local)가 설정되지 않아 예시 수치를 표시하고 있습니다.
+          <b>{i.t('banner.demoTitle')}</b> — {i.t('banner.demoBody')}
         </div>
       )}
       {data.warnings.map(w => (
         <div className="banner" key={w}>
-          <b>일부 데이터 제외</b> — {w}
+          <b>{i.t('banner.excluded')}</b> — {w}
         </div>
       ))}
       {filtered && (
         <div className="periodnote">
-          <b>{PERIODS.find(p => p.key === period)!.label}</b> 보기 — 기간 적용: 지원·지원자·퍼널(이 기간
-          지원자의 현재 도달 단계)·공고 표 숫자·베트남 지원, 입사는 입사일 기준, <b>비용은 이 기간에 집행된 금액</b>
-          (광고비 일별 · 게재비 인보이스 일자 기준) · 항상 누적: 재직·매출·인재풀·
-          &lsquo;지금 진행 중&rsquo;(현재 상태)·공고 판정·충원율
-          {data.spendAsOf && <> · 광고비 원장 반영일 {fmtDay(data.spendAsOf)}까지</>}
+          {rich(i.t('periodnote.main', { p: periodLabel(i, period) }))}
+          {data.spendAsOf && <>{i.t('periodnote.spend', { d: i.fmtDay(data.spendAsOf) })}</>}
         </div>
       )}
 
@@ -167,17 +177,17 @@ async function Dashboard({
             <div className="hero-card">
               <div className="hero-main">
                 <div className="hero-label">
-                  입사 ({filtered ? `${PERIODS.find(p => p.key === period)!.label} · 입사일 기준` : '누적'})
+                  {filtered ? i.t('hero.labelFiltered', { p: periodLabel(i, period) }) : i.t('hero.labelAll')}
                 </div>
                 <div className="hero-row">
                   <span className="hero-num">
                     <CountUp n={filtered && h.hiresInPeriod != null ? h.hiresInPeriod : h.hiresTotal} />
                   </span>
-                  <span className="hero-unit">명</span>
+                  {i.t('unit.people') && <span className="hero-unit">{i.t('unit.people')}</span>}
                   {filtered ? (
-                    <span className="chip">누적 {fmtInt(h.hiresTotal)}명</span>
+                    <span className="chip">{i.t('chip.cumHires', { n: i.fmtInt(h.hiresTotal) })}</span>
                   ) : (
-                    h.hiresThisMonth > 0 && <span className="chip">이번 달 +{h.hiresThisMonth}</span>
+                    h.hiresThisMonth > 0 && <span className="chip">{i.t('chip.monthHires', { n: h.hiresThisMonth })}</span>
                   )}
                 </div>
               </div>
@@ -186,26 +196,26 @@ async function Dashboard({
                   className="kv"
                   title={
                     h.working + h.left !== h.hiresTotal
-                      ? `재직·이탈은 Ops 시트 귀속 입사자 ${fmtInt(h.working + h.left)}명 기준 — 입사(파이프라인 최종합격) ${fmtInt(h.hiresTotal)}명과의 차이는 파이프라인 상태 미갱신 인원`
+                      ? i.t('title.workingGap', { a: i.fmtInt(h.working + h.left), b: i.fmtInt(h.hiresTotal) })
                       : undefined
                   }
                 >
-                  <div className="k">재직 중</div>
+                  <div className="k">{i.t('kv.working')}</div>
                   <div className="v">
-                    {fmtInt(h.working)}명 <span className="dim">/ 이탈 {h.left}명</span>
+                    {i.t('n.people', { n: i.fmtInt(h.working) })} <span className="dim">{i.t('kv.leftDim', { n: i.fmtInt(h.left) })}</span>
                   </div>
                 </div>
                 <div className="kv">
-                  <div className="k">총 매출{filtered && ' (누적)'}</div>
+                  <div className="k">{i.t('kv.revenue')}{filtered && i.t('common.cumSuffix')}</div>
                   <div className="v">
-                    {fmtUsd(h.revenueUsd)} <span className="dim">이익 {fmtUsd(h.profitUsd)}</span>
+                    {i.fmtUsd(h.revenueUsd)} <span className="dim">{i.t('kv.profitDim', { v: i.fmtUsd(h.profitUsd) })}</span>
                   </div>
                 </div>
                 <div className="kv">
-                  <div className="k">채용 1명당 마케팅 비용{filtered && ' (이 기간 집행분)'}</div>
+                  <div className="k">{i.t('kv.cph')}{filtered && i.t('kv.cphPeriodSuffix')}</div>
                   <div className="v">
-                    {h.costPerHireKrw != null ? fmtKrw(h.costPerHireKrw) : '–'}{' '}
-                    <span className="dim">지출 {fmtKrw(h.totalSpendKrw)}</span>
+                    {h.costPerHireKrw != null ? i.fmtKrw(h.costPerHireKrw) : '–'}{' '}
+                    <span className="dim">{i.t('kv.spendDim', { v: i.fmtKrw(h.totalSpendKrw) })}</span>
                   </div>
                 </div>
               </div>
@@ -215,45 +225,45 @@ async function Dashboard({
           {/* 트랙 × 스쿼드 매트릭스 — 칠판 구조 그대로 */}
           <section className="section">
             <div className="section-head">
-              <h2>트랙 × 스쿼드</h2>
-              <span className="sub">한국기업·베트남 로컬 두 트랙 × 기업 유입 / 인재 유입 / 매칭 세 스쿼드</span>
+              <h2>{i.t('sec.matrix')}</h2>
+              <span className="sub">{i.t('sec.matrixSub')}</span>
             </div>
             <div className="matrix-scroll">
               <div className="matrix">
                 <div className="mhead" />
                 <div className="mhead">
-                  기업 유입<span>기업 확보</span>
+                  {i.t('matrix.headCompany')}<span>{i.t('matrix.headCompanySub')}</span>
                 </div>
                 <div className="mhead">
-                  인재 유입<span>지원 모집</span>
+                  {i.t('matrix.headTalent')}<span>{i.t('matrix.headTalentSub')}</span>
                 </div>
                 <div className="mhead">
-                  매칭<span>채용 성사</span>
+                  {i.t('matrix.headMatch')}<span>{i.t('matrix.headMatchSub')}</span>
                 </div>
 
                 <div className="mrow">
-                  한국기업<span>KTC 경유</span>
+                  {i.t('matrix.rowKorea')}<span>{i.t('matrix.rowKoreaSub')}</span>
                 </div>
                 <div className="mcell">
                   <div className="num">
-                    {fmtInt(matching.jds.length)}
-                    <small>건 공고 수주</small>
+                    {i.fmtInt(matching.jds.length)}
+                    <small>{i.t('matrix.u.jdWon')}</small>
                   </div>
                   <div className="sub">
-                    모집 중 {fmtInt(matching.openJds)}건 · 목표 {fmtInt(matching.headcountTotal)}명 중 {fmtInt(matching.hiresInOpen)}명 채움
+                    {i.t('matrix.openFill', { o: i.fmtInt(matching.openJds), m: i.fmtInt(matching.headcountTotal), k: i.fmtInt(matching.hiresInOpen) })}
                   </div>
                 </div>
                 <div className="mcell">
                   <div className="num">
-                    {fmtInt(supply.candidatesTotal)}
-                    <small>명 지원</small>
+                    {i.fmtInt(supply.candidatesTotal)}
+                    <small>{i.t('matrix.u.applied')}</small>
                   </div>
-                  <div className="sub">스크리닝 합격 {fmtInt(matching.funnel[1]?.count ?? 0)}명</div>
+                  <div className="sub">{i.t('matrix.screenPass', { n: i.fmtInt(matching.funnel[1]?.count ?? 0) })}</div>
                 </div>
                 <div className="mcell">
                   <div className="num">
-                    {fmtInt(filtered && h.hiresInPeriod != null ? h.hiresInPeriod : h.hiresTotal)}
-                    <small>명 입사{filtered ? ' (기간)' : ''}</small>
+                    {i.fmtInt(filtered && h.hiresInPeriod != null ? h.hiresInPeriod : h.hiresTotal)}
+                    <small>{i.t('matrix.u.hired')}{filtered ? i.t('common.periodSuffix') : ''}</small>
                   </div>
                   <div className="sub">
                     {(() => {
@@ -263,39 +273,39 @@ async function Dashboard({
                       return stuck ? (
                         <i
                           className="jdot stall"
-                          title={`기업 전달 누적 ${fmtInt(delivered)}명 중 ${fmtInt(p.sentToCompany)}명이 아직 기업 검토 단계 — 처리 적체 신호`}
+                          title={i.t('matrix.stuckTitle', { a: i.fmtInt(delivered), b: i.fmtInt(p.sentToCompany) })}
                         />
                       ) : null
                     })()}
-                    지금 기업 검토 {fmtInt(p.sentToCompany)}명 · 면접 {fmtInt(p.interviewing)}명 · 재직 {fmtInt(h.working)}명
+                    {i.t('matrix.nowLine', { a: i.fmtInt(p.sentToCompany), b: i.fmtInt(p.interviewing), c: i.fmtInt(h.working) })}
                   </div>
                 </div>
 
                 <div className="mrow">
-                  베트남 로컬<span>FYI 직접</span>
+                  {i.t('matrix.rowVn')}<span>{i.t('matrix.rowVnSub')}</span>
                 </div>
                 <div className="mcell">
                   <div className="num">
-                    {fmtInt(v.companies)}
-                    <small>개 기업</small>
+                    {i.fmtInt(v.companies)}
+                    <small>{i.t('matrix.u.companies')}</small>
                   </div>
-                  <div className="sub">공고 {fmtInt(v.jobsTotal)}건 (모집 중 {fmtInt(v.jobsActive)}건)</div>
+                  <div className="sub">{i.t('matrix.vnJobs', { n: i.fmtInt(v.jobsTotal), m: i.fmtInt(v.jobsActive) })}</div>
                 </div>
                 <div className="mcell">
                   <div className="num">
-                    {fmtInt(v.applicants)}
-                    <small>명 지원</small>
+                    {i.fmtInt(v.applicants)}
+                    <small>{i.t('matrix.u.applied')}</small>
                   </div>
-                  <div className="sub">지원 {fmtInt(v.applications)}건 · 이력서 보유 {fmtInt(supply.talentPoolResume)}명</div>
+                  <div className="sub">{i.t('matrix.vnAppsLine', { n: i.fmtInt(v.applications), m: i.fmtInt(supply.talentPoolResume) })}</div>
                 </div>
                 <div className="mcell">
                   <div className="num">
-                    {fmtInt(v.viewed)}
-                    <small>건 기업 열람</small>
+                    {i.fmtInt(v.viewed)}
+                    <small>{i.t('matrix.u.viewed')}</small>
                   </div>
                   <div className="sub">
-                    아직 성사 아님 — 기업이 지원서를 열어본 건수
-                    {v.applications > 0 && ` (열람율 ${fmtPct(v.viewed / v.applications, 0)})`} · 채용 확정 집계는 연동 예정
+                    {i.t('matrix.viewedNote')}
+                    {v.applications > 0 && ` ${i.t('matrix.viewedRate', { p: fmtPct(v.viewed / v.applications, 0) })}`}{i.t('matrix.viewedTail')}
                   </div>
                 </div>
               </div>
@@ -304,19 +314,20 @@ async function Dashboard({
 
           <section className="section">
             <div className="section-head">
-              <h2>지원부터 입사까지 (한국기업)</h2>
+              <h2>{i.t('sec.funnel')}</h2>
               <span className="sub">
-                {filtered ? '이 기간에 지원한 인재가 지금 어디까지 갔는지' : '누적 도달 인원'}
+                {filtered ? i.t('sec.funnelSubFiltered') : i.t('sec.funnelSubAll')}
               </span>
             </div>
             <div className="card">
               <Funnel
+                i={i}
                 stages={matching.funnel}
                 // 오퍼는 통과 즉시 입사로 상태 전환 — 지금 오퍼 진행자가 없으면 두 단계 수치가 같아져 100% 로 보인다
                 extra={
                   p.offer === 0 &&
                   matching.funnel.at(-2)?.count === matching.funnel.at(-1)?.count
-                    ? '오퍼·계약과 입사가 같은 것은 지금 오퍼 진행 중인 인원이 0명이기 때문 (오퍼는 수락 즉시 입사로 전환)'
+                    ? i.t('funnel.offerSame')
                     : undefined
                 }
               />
@@ -330,10 +341,10 @@ async function Dashboard({
         <>
           <section className="section">
             <div className="section-head">
-              <h2>지금 진행 중</h2>
+              <h2>{i.t('sec.now')}</h2>
               <span className="sub">
-                각 단계에 걸려 있는 인원 — 아랫줄은 모집 중 공고 몫, 호버하면 최다 공고
-                {filtered && ' · 현재 상태 스냅숏이라 기간 필터 무관'}
+                {i.t('sec.nowSub')}
+                {filtered && i.t('sec.nowSubPeriod')}
                 <SrcTip k="now.stages" left />
               </span>
             </div>
@@ -343,12 +354,12 @@ async function Dashboard({
                 // 마감 공고에 남은 상태값(예: 검토 중 232명)이 커서, 액션 가능한 몫을 분리해 보여준다.
                 type J = (typeof openJds)[number]
                 const stages: { label: string; total: number; of: (j: J) => number; status: string; hint?: string }[] = [
-                  { label: '스크리닝 대기', total: p.screeningQueue, of: j => j.curNew, status: 'new' },
-                  { label: '합격 후 대기', total: p.screenPassed, of: j => j.curPassed, status: 'passed', hint: '스크리닝은 합격했는데 아직 발송 준비에 들어가지 않은 인원' },
-                  { label: '발송 대기', total: p.readyToForward, of: j => j.curReady, status: 'ready_to_forward' },
-                  { label: '기업 검토 중', total: p.sentToCompany, of: j => j.curCompany, status: 'sent_to_company' },
-                  { label: '면접 진행 중', total: p.interviewing, of: j => j.curInterview, status: 'interviewing' },
-                  { label: '오퍼·계약 중', total: p.offer, of: j => j.curOffer, status: 'offer' },
+                  { label: i.t('stage.new'), total: p.screeningQueue, of: j => j.curNew, status: 'new' },
+                  { label: i.t('stage.passed'), total: p.screenPassed, of: j => j.curPassed, status: 'passed', hint: i.t('stage.passedHint') },
+                  { label: i.t('stage.ready'), total: p.readyToForward, of: j => j.curReady, status: 'ready_to_forward' },
+                  { label: i.t('stage.company'), total: p.sentToCompany, of: j => j.curCompany, status: 'sent_to_company' },
+                  { label: i.t('stage.interview'), total: p.interviewing, of: j => j.curInterview, status: 'interviewing' },
+                  { label: i.t('stage.offer'), total: p.offer, of: j => j.curOffer, status: 'offer' },
                 ]
                 return stages.map(s => {
                   const inOpen = openJds.reduce((n, j) => n + s.of(j), 0)
@@ -356,19 +367,19 @@ async function Dashboard({
                   const rest = Math.max(0, s.total - inOpen)
                   const title = [
                     s.hint,
-                    top && s.of(top) > 0 ? `모집 중 최다: ${top.company} ${top.code} — ${fmtInt(s.of(top))}명` : null,
-                    rest > 0 ? `'그 외'는 마감 공고 잔류·공고 미귀속 인원` : null,
-                    `출처: ktc-support DB candidates — pipeline_status = '${s.status}' 인 인원`,
+                    top && s.of(top) > 0 ? i.t('now.topTitle', { co: top.company, code: top.code, n: i.fmtInt(s.of(top)) }) : null,
+                    rest > 0 ? i.t('now.restTitle') : null,
+                    i.t('now.srcTitle', { s: s.status }),
                   ]
                     .filter(Boolean)
                     .join('\n')
                   return (
                     <div className="cell" key={s.label} title={title || undefined}>
                       <div className="label">{s.label}</div>
-                      <div className="value">{fmtInt(s.total)}</div>
+                      <div className="value">{i.fmtInt(s.total)}</div>
                       <div className="sub">
-                        모집 중 {fmtInt(inOpen)}
-                        {rest > 0 && <span className="dim"> · 그 외 {fmtInt(rest)}</span>}
+                        {i.t('now.inOpen', { n: i.fmtInt(inOpen) })}
+                        {rest > 0 && <span className="dim">{i.t('now.rest', { n: i.fmtInt(rest) })}</span>}
                       </div>
                     </div>
                   )
@@ -379,18 +390,18 @@ async function Dashboard({
 
           <section className="section">
             <div className="section-head wrapline">
-              <h2>진행 중 공고</h2>
+              <h2>{i.t('sec.jds')}</h2>
               <span className="sub">
-                {fmtInt(openJds.length)}건 · 목표 {fmtInt(matching.headcountTotal)}명 중 {fmtInt(matching.hiresInOpen)}명 채움
-                {matching.jdSince && <> · {fmtSinceMonth(matching.jdSince)}부터 누적 {fmtInt(matching.jds.length)}건 수주</>}
+                {i.t('jds.fill', { n: i.fmtInt(openJds.length), m: i.fmtInt(matching.headcountTotal), k: i.fmtInt(matching.hiresInOpen) })}
+                {matching.jdSince && <>{i.t('jds.since', { m: i.fmtSinceMonth(matching.jdSince), n: i.fmtInt(matching.jds.length) })}</>}
               </span>
-              <JdHealthSummary jds={openJds} />
+              <JdHealthSummary i={i} jds={openJds} />
             </div>
             <div className="card">
               <JdTable jds={openJds} />
               {closedJds.length > 0 && (
                 <details className="fold">
-                  <summary>마감 공고 {fmtInt(closedJds.length)}건 보기</summary>
+                  <summary>{i.t('fold.closed', { n: i.fmtInt(closedJds.length) })}</summary>
                   <JdTable jds={closedJds} mode="closed" />
                 </details>
               )}
@@ -399,15 +410,15 @@ async function Dashboard({
 
           <section className="section">
             <div className="section-head">
-              <h2>기업별 성과</h2>
+              <h2>{i.t('sec.company')}</h2>
               <span className="sub">
-                입사·재직·매출 — 파이프라인 경유 입사만 집계
-                {outcome.excludedHires > 0 && ` (별도 경로 입사 ${outcome.excludedHires}명 제외)`}
-                {filtered && ' · 누적 기준 (기간 무관)'}
+                {i.t('sec.companySub')}
+                {outcome.excludedHires > 0 && i.t('sec.companyExcluded', { n: outcome.excludedHires })}
+                {filtered && i.t('sec.companyCum')}
               </span>
             </div>
             <div className="card">
-              <CompanyTable companies={outcome.companies} />
+              <CompanyTable i={i} companies={outcome.companies} />
             </div>
           </section>
         </>
@@ -418,19 +429,19 @@ async function Dashboard({
         <>
           <section className="section">
             <div className="section-head">
-              <h2>베트남 매칭 (FYI 자체)</h2>
-              <span className="sub">베트남 기업 ↔ 베트남 인재 — FYI 플랫폼 안에서 직접 매칭 (ktc-support 미경유)</span>
+              <h2>{i.t('sec.vn')}</h2>
+              <span className="sub">{i.t('sec.vnSub')}</span>
             </div>
             <div className="tiles">
-              <StatTile label="활성 공고" num={v.jobsActive} unit="건" sub={`누적 등록 ${fmtInt(v.jobsTotal)}건`} src="vn.jobs" />
-              <StatTile label="등록 기업" num={v.companies} unit="곳" src="vn.companies" />
-              <StatTile label="지원 건" num={v.applications} unit="건" src="vn.apps" />
-              <StatTile label="지원자" num={v.applicants} unit="명" src="vn.applicants" />
+              <StatTile label={i.t('tile.vnActive')} num={v.jobsActive} unit={i.t('unit.jobs')} sub={i.t('tile.vnActiveSub', { n: i.fmtInt(v.jobsTotal) })} src="vn.jobs" />
+              <StatTile label={i.t('tile.vnCompanies')} num={v.companies} unit={i.t('unit.companies')} src="vn.companies" />
+              <StatTile label={i.t('tile.vnApps')} num={v.applications} unit={i.t('unit.apps')} src="vn.apps" />
+              <StatTile label={i.t('tile.vnApplicants')} num={v.applicants} unit={i.t('unit.people')} src="vn.applicants" />
               <StatTile
-                label="기업 열람"
+                label={i.t('tile.vnViewed')}
                 num={v.viewed}
-                unit="건"
-                sub={v.applications > 0 ? `열람율 ${fmtPct(v.viewed / v.applications, 0)}` : undefined}
+                unit={i.t('unit.views')}
+                sub={v.applications > 0 ? i.t('tile.vnViewedSub', { p: fmtPct(v.viewed / v.applications, 0) }) : undefined}
                 src="vn.viewed"
               />
             </div>
@@ -438,16 +449,9 @@ async function Dashboard({
           <section className="section">
             <div className="card">
               {v.jobsTotal === 0 ? (
-                <p className="dim">
-                  아직 기업이 직접 등록한 자체 공고가 없습니다. 베트남 기업 공고가 FYI 에 올라오면 이 탭에 자동으로
-                  집계됩니다.
-                </p>
+                <p className="dim">{i.t('vn.empty')}</p>
               ) : (
-                <p className="dim">
-                  현재 추적 단계: 공고 등록 → 지원 → 기업 열람. 스크리닝·면접·채용 확정 단계는 FYI 지원 상태값이
-                  운영에 도입되는 대로 한국 매칭과 같은 퍼널 어휘(스크리닝 합격 → 기업 전달 → 면접 → 오퍼 → 입사)로
-                  이 탭에 추가됩니다.
-                </p>
+                <p className="dim">{i.t('vn.trackNote')}</p>
               )}
             </div>
           </section>
@@ -459,51 +463,47 @@ async function Dashboard({
         <>
           <section className="section">
             <div className="section-head">
-              <h2>인재풀 (FYI)</h2>
-              <span className="sub">salary-fyi.com 에 쌓인 매칭 가능 인재</span>
+              <h2>{i.t('sec.talent')}</h2>
+              <span className="sub">{i.t('sec.talentSub')}</span>
             </div>
             <div className="tiles">
-              <StatTile label="이력서 등록" num={supply.talentPoolResume} unit="명" src="tp.resume" />
-              <StatTile label="이력서 공개 (HR 열람 가능)" num={supply.talentPoolPublic} unit="명" src="tp.public" />
-              <StatTile label="지원자 (전 채널 누적)" num={supply.candidatesTotal} unit="명" src="tp.people" />
-              <StatTile label="지원 건 (전 채널 누적)" num={supply.applicationsTotal} unit="건" src="tp.apps" />
+              <StatTile label={i.t('tile.resume')} num={supply.talentPoolResume} unit={i.t('unit.people')} src="tp.resume" />
+              <StatTile label={i.t('tile.public')} num={supply.talentPoolPublic} unit={i.t('unit.people')} src="tp.public" />
+              <StatTile label={i.t('tile.people')} num={supply.candidatesTotal} unit={i.t('unit.people')} src="tp.people" />
+              <StatTile label={i.t('tile.apps')} num={supply.applicationsTotal} unit={i.t('unit.apps')} src="tp.apps" />
             </div>
           </section>
 
           <section className="section">
             <div className="section-head wrapline">
-              <h2>유입 채널별 성과·비용</h2>
+              <h2>{i.t('sec.channels')}</h2>
               <span className="sub">
-                성과순 · <span className="ck paid">유료</span> 게재비·광고 집행{' '}
-                <span className="ck own">자사</span> 우리 플랫폼 <span className="ck free">무료</span> 무료 게재
-                {data.spendAsOf && (
-                  <>
-                    {' · '}광고비는 {fmtDay(data.spendAsOf)}까지 반영 (그 뒤 집행분은 비용 시트 갱신 후)
-                  </>
-                )}
+                {i.t('channels.sortNote')} <span className="ck paid">{i.t('kind.paid')}</span> {i.t('kindDesc.paid')}{' '}
+                <span className="ck own">{i.t('kind.own')}</span> {i.t('kindDesc.own')} <span className="ck free">{i.t('kind.free')}</span> {i.t('kindDesc.free')}
+                {data.spendAsOf && <>{i.t('channels.spendAsOf', { d: i.fmtDay(data.spendAsOf) })}</>}
               </span>
-              <ChannelHealthSummary channels={supply.channels} />
+              <ChannelHealthSummary i={i} channels={supply.channels} />
             </div>
             <div className="card">
-              <ChannelTable channels={supply.channels} spendAsOf={data.spendAsOf} />
+              <ChannelTable i={i} channels={supply.channels} spendAsOf={data.spendAsOf} />
             </div>
           </section>
 
           <section className="section">
             <div className="section-head">
-              <h2>월별 지원 건 추이</h2>
-              <span className="sub">전 채널 합산, 지원월 기준<SrcTip k="chart.apps" left /></span>
+              <h2>{i.t('sec.monthly')}</h2>
+              <span className="sub">{i.t('sec.monthlySub')}<SrcTip k="chart.apps" left /></span>
             </div>
             <div className="card">
-              <MonthlyBars points={supply.monthly} />
+              <MonthlyBars i={i} points={supply.monthly} />
             </div>
           </section>
 
           <section className="section">
             <div className="section-head">
-              <h2>일별 지원 건 추이</h2>
+              <h2>{i.t('sec.daily')}</h2>
               <span className="sub">
-                최근 30일 · 채널별, 지원일 기준 — 채널 이름을 누르면 그 채널만 보기, 그래프에 마우스를 올리면 날짜별 상세
+                {i.t('sec.dailySub')}
                 <SrcTip k="chart.apps" left />
               </span>
             </div>
@@ -518,150 +518,49 @@ async function Dashboard({
       {tab === 'glossary' && (
         <section className="section">
           <div className="section-head">
-            <h2>용어 사전</h2>
+            <h2>{i.t('sec.gl')}</h2>
             <span className="sub">
-              이 대시보드의 모든 숫자는 아래 정의를 따릅니다 — 표·타일의 <span className="srci-demo">i</span> 배지에
-              마우스를 올리면 그 숫자의 원본(어느 시트 · 어느 탭 · 어느 열)이 보입니다
+              {i.t('sec.glSub1')}<span className="srci-demo">i</span>{i.t('sec.glSub2')}
             </span>
           </div>
           <div className="card">
             <dl className="glossary">
-              <div>
-                <dt>인재풀</dt>
-                <dd>FYI(salary-fyi.com)에 이력서를 등록한 인재 수</dd>
-              </div>
-              <div>
-                <dt>지원자</dt>
-                <dd>고유 인재 1명 (여러 공고에 지원해도 1명, 최초 유입 채널로 귀속)</dd>
-              </div>
-              <div>
-                <dt>지원 건</dt>
-                <dd>공고 1건에 대한 지원 1건 (한 사람이 공고 2개 지원 = 2건)</dd>
-              </div>
-              <div>
-                <dt>스크리닝 합격</dt>
-                <dd>AI CV 스크리닝 통과 (이후 단계 도달자 포함 누적)</dd>
-              </div>
-              <div>
-                <dt>기업 전달</dt>
-                <dd>이력서가 기업에 전달된 인원 (누적)</dd>
-              </div>
-              <div>
-                <dt>면접</dt>
-                <dd>
-                  기업 면접에 도달한 인원 — 파이프라인 상태 <code>면접 중</code> 이상(오퍼·입사 포함).
-                  파이프라인에 단계 이력이 없어 <b>면접 후 탈락한 사람은 포함되지 않습니다</b>(현재 상태만 남음).
-                  2026년 상반기까지 운영하던 자체 폰 인터뷰·AI 인터뷰 기록은 폐지된 단계라 집계에서 제외했습니다.
-                </dd>
-              </div>
-              <div>
-                <dt>오퍼·계약</dt>
-                <dd>오퍼 또는 계약 단계 도달 인원</dd>
-              </div>
-              <div>
-                <dt>입사</dt>
-                <dd>파이프라인을 거쳐 최종 입사한 인원 (별도 경로 입사 제외)</dd>
-              </div>
-              <div>
-                <dt>재직 중</dt>
-                <dd>파이프라인 경유 입사자 중 현재 재직 유지 인원</dd>
-              </div>
-              <div>
-                <dt>TO / 충원율</dt>
-                <dd>
-                  공고별 채용 자리 수 / 채운 자리 ÷ TO — 둘 다 <b>KTC Ops `Matching Status` 기준</b>
-                  (공고 행의 &lsquo;Total TO&rsquo; 와 &lsquo;Matches&rsquo; 열). <b>이탈하면 다시 빈자리가 됩니다.</b>
-                  Matching Status에 없는 공고만 JD EXECUTION의 Headcount 열로 폴백합니다.
-                </dd>
-              </div>
-              <div>
-                <dt>모집 시작일 / D+N</dt>
-                <dd>
-                  기업에서 공고를 받아 모집을 연 날 (Master 시트 Date Received, 미기재 시 그 공고의 최초 지원일) ·
-                  D+N = 모집 시작 후 경과 일수 (판정 기준의 1주 = D+7, 6주 = D+42)
-                </dd>
-              </div>
-              <div>
-                <dt>공고 판정</dt>
-                <dd>
-                  충원 완료 = TO 자리를 다 채움 (모집 마감·공고 내리기 대상, 충원율 칸에 &lsquo;완료&rsquo;) ·
-                  순항 = 면접·오퍼 진행, 또는 기업 검토 중(입사 이력이 있거나 모집 6주 미만) ·
-                  정체 = 모집 6주 넘도록 기업 반응(면접 전환) 0이거나 기업 단계에 아무도 없음 ·
-                  지원 부족 = TO 1명당 지원 30건 미만 · 모집 초기 = 모집 시작 1주 미만 (판정 유예)
-                </dd>
-              </div>
-              <div>
-                <dt>TO당 지원 30건</dt>
-                <dd>지원 부족의 기준선 — 입사가 성사된 공고들의 TO당 지원 건 실측 (최소 17 ~ 중앙값 58건)의 하위 사분위 수준</dd>
-              </div>
-              <div>
-                <dt>기간 보기</dt>
-                <dd>
-                  {ACTION_LABEL}~ / 이번 달 / 최근 30일에서 기간이 적용되는 지표: 지원·지원자·퍼널(그 기간 지원자의
-                  현재 도달 단계)·공고 표 숫자·베트남 지원, 입사(입사일 기준), <b>비용(그 기간에 집행된 금액)</b>.
-                  재직·매출·인재풀·진행 중 인원·공고 판정·충원율은 시간 축이 없거나 현재 상태라 항상 누적
-                </dd>
-              </div>
-              <div>
-                <dt>{ACTION_LABEL}~ (액션 분리선)</dt>
-                <dd>
-                  FYI 가짜 공고 정리와 KTC 집중 집행을 시작한 날 이후만 보는 창 — 월 단위로 끊으면 이 액션이
-                  7월 숫자에 섞여 성과가 보이지 않아 일자 기준으로 나눈다
-                </dd>
-              </div>
-              <div>
-                <dt>진행 인원</dt>
-                <dd>
-                  지금 그 단계에 걸려 있는 인원 (현재 상태 기준, 도달 누적 아님) — 스트립의 큰 숫자는 마감 공고
-                  잔류·공고 미귀속 포함 전체, 아랫줄 "모집 중"이 지금 액션 가능한 몫
-                </dd>
-              </div>
-              <div>
-                <dt>합격 후 대기</dt>
-                <dd>스크리닝에 합격했지만 아직 기업 발송 준비(발송 대기)로 넘어가지 않은 인원</dd>
-              </div>
-              <div>
-                <dt>지원자당 비용</dt>
-                <dd>채널 지출 ÷ 지원자 수 (CPA)</dd>
-              </div>
-              <div>
-                <dt>채용당 비용</dt>
-                <dd>채널 지출 ÷ 입사 수</dd>
-              </div>
-              <div>
-                <dt>채널 판정</dt>
-                <dd>
-                  성과 = 입사 발생, 채용당 비용 정상 · 고비용 = 입사는 있지만 채용당 비용이 전체 평균의 3배 이상 ·
-                  점검 = 지출 있는데 입사 0 · 관망 = 지출·입사 모두 0 (기간 보기에서는 그 기간 집행분 기준으로 판정)
-                </dd>
-              </div>
-              <div>
-                <dt>과거 유입 경로</dt>
-                <dd>지금은 쓰지 않는 유입 경로 (구 시트·구글폼·채널 미상 등) — 채널 표 맨 아래 '과거' 칩으로 구분, 판정 제외</dd>
-              </div>
-              <div>
-                <dt>FYI ~{ACTION_PREV_LABEL} / {ACTION_LABEL}~</dt>
-                <dd>
-                  FYI 채널을 <b>액션 분리선({ACTION_LABEL})</b> 기준으로 나눈 두 행 — 그 전까지는 FYI 에 KTC 외
-                  공고가 섞여 있어 지원 숫자가 혼합 집계였고, <b>{ACTION_LABEL}부터는 KTC 공고만 남겨</b> 마케팅비
-                  대비 성과를 그대로 읽는다. 지원자는 최초 지원 시점 기준으로 한쪽 행에만 귀속하고, 광고비도
-                  집행 날짜로 나눠 각 행에 붙는다 (원래 8/1 월 경계였으나 실제 액션이 {ACTION_LABEL}이라 일자 경계로 교체)
-                </dd>
-              </div>
-              <div>
-                <dt>베트남 매칭</dt>
-                <dd>베트남 기업이 FYI 에 직접 올린 공고로 이뤄지는 매칭 (한국 매칭 파이프라인과 별도 트랙)</dd>
-              </div>
-              <div>
-                <dt>기업 열람</dt>
-                <dd>베트남 매칭에서 기업이 지원서를 열어 본 건수</dd>
-              </div>
+              {(
+                [
+                  ['gl.pool', {}],
+                  ['gl.applicant', {}],
+                  ['gl.application', {}],
+                  ['gl.screen', {}],
+                  ['gl.delivered', {}],
+                  ['gl.interview', {}],
+                  ['gl.offer', {}],
+                  ['gl.hired', {}],
+                  ['gl.working', {}],
+                  ['gl.to', {}],
+                  ['gl.startDate', {}],
+                  ['gl.judge', {}],
+                  ['gl.per30', {}],
+                  ['gl.periodView', { d: ACTION_LABEL }],
+                  ['gl.actionLine', { d: ACTION_LABEL }],
+                  ['gl.inProgress', {}],
+                  ['gl.passedWait', {}],
+                  ['gl.cpa', {}],
+                  ['gl.cph', {}],
+                  ['gl.chJudge', {}],
+                  ['gl.legacy', {}],
+                  ['gl.fyiSplit', { a: ACTION_PREV_LABEL, b: ACTION_LABEL }],
+                  ['gl.vnMatch', {}],
+                  ['gl.viewed', {}],
+                ] as [string, Record<string, string>][]
+              ).map(([key, params]) => (
+                <div key={key}>
+                  <dt>{rich(i.t(`${key}.dt`, params))}</dt>
+                  <dd>{rich(i.t(`${key}.dd`, params))}</dd>
+                </div>
+              ))}
             </dl>
           </div>
-          <div className="foot">
-            출처: ktc-support(파이프라인 라이브) · salarymap/FYI(인재풀·지원 건·베트남 매칭) · Master 시트(공고) ·
-            KTC Ops 시트(입사·매출) · 비용 시트(지출) — 30분 캐시, 새로고침으로 즉시 갱신
-          </div>
+          <div className="foot">{i.t('gl.foot')}</div>
         </section>
       )}
     </SrcLinkProvider>

@@ -4,12 +4,12 @@
 // prefers-reduced-motion 이면 즉시 최종값 표시.
 
 import { useEffect, useState } from 'react'
-import { fmtInt, fmtKrw, fmtUsd } from '@/lib/fmt'
+import { useI18n } from './i18n-provider'
 
-const FMT = { int: fmtInt, krw: fmtKrw, usd: fmtUsd } as const
-export type CountKind = keyof typeof FMT
+export type CountKind = 'int' | 'krw' | 'usd'
 
 export function CountUp({ n, kind = 'int', duration = 900 }: { n: number; kind?: CountKind; duration?: number }) {
+  const i = useI18n()
   const [v, setV] = useState(0)
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -27,5 +27,6 @@ export function CountUp({ n, kind = 'int', duration = 900 }: { n: number; kind?:
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
   }, [n, duration])
-  return <>{FMT[kind](Math.round(v))}</>
+  const r = Math.round(v)
+  return <>{kind === 'krw' ? i.fmtKrw(r) : kind === 'usd' ? i.fmtUsd(r) : i.fmtInt(r)}</>
 }

@@ -10,9 +10,11 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { JdRow } from '@/lib/types'
-import { channelLabel, fmtDay, fmtInt } from '@/lib/fmt'
+import type { I18n } from '@/lib/i18n'
+import { rich } from '@/lib/i18n-rich'
 import { EmptyState, Meter } from './viz'
 import { SrcTip } from './src-tip'
+import { useI18n } from './i18n-provider'
 import type { SrcKey } from '@/lib/sources'
 import { HEALTH_META, HEALTH_ORDER, jdView } from './tables'
 
@@ -31,7 +33,7 @@ const CH_SLUG: Record<string, string> = {
 
 type DonutPart = { label: string; apps: number; slug: string; note?: string }
 
-function siteBreakdown(channels: JdRow['channels']): DonutPart[] {
+function siteBreakdown(i: I18n, channels: JdRow['channels']): DonutPart[] {
   const bySite: Record<string, number> = {}
   for (const c of channels) {
     const site = CH_SITE[c.key] || c.key
@@ -42,23 +44,23 @@ function siteBreakdown(channels: JdRow['channels']): DonutPart[] {
   const etcParts: string[] = []
   for (const [site, apps] of Object.entries(bySite).sort((a, b) => b[1] - a[1])) {
     const slug = CH_SLUG[site]
-    if (slug) named.push({ label: site === 'ITviec' ? 'ITviec' : channelLabel(site), apps, slug })
+    if (slug) named.push({ label: site === 'ITviec' ? 'ITviec' : i.channelLabel(site), apps, slug })
     else {
       etc += apps
-      etcParts.push(`${channelLabel(site)} ${fmtInt(apps)}건`)
+      etcParts.push(`${i.channelLabel(site)} ${i.t('n.apps', { n: i.fmtInt(apps) })}`)
     }
   }
-  if (etc > 0) named.push({ label: '기타', apps: etc, slug: 'etc', note: etcParts.join(' · ') })
+  if (etc > 0) named.push({ label: i.t('common.etc'), apps: etc, slug: 'etc', note: etcParts.join(' · ') })
   return named
 }
 
-function Donut({ parts, total }: { parts: DonutPart[]; total: number }) {
+function Donut({ i, parts, total }: { i: I18n; parts: DonutPart[]; total: number }) {
   const R = 44
   const C = 2 * Math.PI * R
   const gap = parts.length > 1 ? 2 : 0
   let acc = 0
   return (
-    <svg className="dnt" viewBox="0 0 120 120" role="img" aria-label="채널별 지원 분포 도넛">
+    <svg className="dnt" viewBox="0 0 120 120" role="img" aria-label={i.t('donut.aria')}>
       <circle className="dnt-track" cx="60" cy="60" r={R} strokeWidth="15" fill="none" />
       {parts.map(p => {
         const frac = total > 0 ? p.apps / total : 0
@@ -74,91 +76,91 @@ function Donut({ parts, total }: { parts: DonutPart[]; total: number }) {
             strokeDashoffset={off}
             transform="rotate(-90 60 60)"
           >
-            <title>{`${p.label} ${fmtInt(p.apps)}건 (${Math.round(frac * 100)}%)${p.note ? ` — ${p.note}` : ''}`}</title>
+            <title>{`${p.label} ${i.t('n.apps', { n: i.fmtInt(p.apps) })} (${Math.round(frac * 100)}%)${p.note ? ` — ${p.note}` : ''}`}</title>
           </circle>
         )
       })}
-      <text className="dnt-num" x="60" y="58" textAnchor="middle">{fmtInt(total)}</text>
-      <text className="dnt-cap" x="60" y="74" textAnchor="middle">지원 건</text>
+      <text className="dnt-num" x="60" y="58" textAnchor="middle">{i.fmtInt(total)}</text>
+      <text className="dnt-cap" x="60" y="74" textAnchor="middle">{i.t('donut.cap')}</text>
     </svg>
   )
 }
 
 // 충원 완료 사유 — TO 대비 몇 명 채웠는지 (초과 채용이면 초과분도 말해준다)
-function doneReason(j: JdRow): string {
+function doneReason(i: I18n, j: JdRow): string {
   const to = j.headcount ?? 0
   const over = j.hiresAll - to
-  return `TO ${fmtInt(to)}자리 중 ${fmtInt(j.hiresAll)}자리 채움${over > 0 ? ` (초과 ${fmtInt(over)})` : ''}${
-    j.dropped > 0 ? ` · 이탈 ${fmtInt(j.dropped)}` : ''
-  }`
+  return `${i.t('jd.done.base', { to: i.fmtInt(to), n: i.fmtInt(j.hiresAll) })}${
+    over > 0 ? i.t('jd.done.over', { n: i.fmtInt(over) }) : ''
+  }${j.dropped > 0 ? i.t('jd.done.drop', { n: i.fmtInt(j.dropped) }) : ''}`
 }
 
 // 순항 사유 한 줄 (문제 공고 사유는 healthNote 재사용)
-function goodReason(j: JdRow): string {
-  if (j.curInterview + j.curOffer > 0) return '면접·오퍼 진행 중'
-  if (j.hiresAll > 0) return '기업 검토 중 — 이미 채운 자리 있음'
-  if (j.responded) return '기업 검토 중 — 기업 면접·매칭 이력 있음'
-  return '기업 검토 중 — 첫 반응 대기 (모집 6주 미만)'
+function goodReason(i: I18n, j: JdRow): string {
+  if (j.curInterview + j.curOffer > 0) return i.t('jd.good.interview')
+  if (j.hiresAll > 0) return i.t('jd.good.hasHire')
+  if (j.responded) return i.t('jd.good.responded')
+  return i.t('jd.good.waiting')
 }
 
-function JdDetail({ j, open, colSpan }: { j: JdRow; open: boolean; colSpan: number }) {
+function JdDetail({ i, j, open, colSpan }: { i: I18n; j: JdRow; open: boolean; colSpan: number }) {
   const view = jdView(j)
-  const parts = siteBreakdown(j.channels)
+  const parts = siteBreakdown(i, j.channels)
   const total = parts.reduce((s, p) => s + p.apps, 0)
   const lastDays =
     j.lastAppDate != null
       ? Math.max(0, Math.floor((Date.now() - new Date(`${j.lastAppDate}T00:00:00+07:00`).getTime()) / 86400000))
       : null
   const stages = [
-    ['스크리닝 대기', j.curNew], ['합격 후 대기', j.curPassed], ['발송 대기', j.curReady],
-    ['기업 검토', j.curCompany], ['면접', j.curInterview], ['오퍼', j.curOffer],
+    [i.t('stage.new'), j.curNew], [i.t('stage.passed'), j.curPassed], [i.t('stage.ready'), j.curReady],
+    [i.t('st.company'), j.curCompany], [i.t('st.interview'), j.curInterview], [i.t('st.offer'), j.curOffer],
   ].filter(([, n]) => (n as number) > 0)
   return (
     <tr className="jdx">
       <td colSpan={colSpan}>
         <div className="jdx-wrap">
-          {total > 0 ? <Donut parts={parts} total={total} /> : <div className="jdx-empty">지원 없음</div>}
+          {total > 0 ? <Donut i={i} parts={parts} total={total} /> : <div className="jdx-empty">{i.t('jdx.empty')}</div>}
           {total > 0 && (
             <div className="jdx-legend">
               {parts.map(p => (
                 <span className={`lg ch-${p.slug}`} key={p.slug + p.label} title={p.note}>
                   <i />
                   {p.label}
-                  <b>{fmtInt(p.apps)}</b>
+                  <b>{i.fmtInt(p.apps)}</b>
                   <span className="pct">{Math.round((p.apps / total) * 100)}%</span>
                 </span>
               ))}
             </div>
           )}
           <dl className="jdx-facts">
-            <dt>모집 시작일</dt>
-            <dd>{j.startDate ? <>{fmtDay(j.startDate)}{j.days != null && <> · <b>D+{fmtInt(j.days)}</b></>}</> : '– (원장 미기입)'}</dd>
-            <dt>최근 지원</dt>
-            <dd>{lastDays == null ? '–' : lastDays === 0 ? <b>오늘</b> : <><b>{fmtInt(lastDays)}일 전</b> ({fmtDay(j.lastAppDate!)})</>}</dd>
-            <dt>지금 단계</dt>
-            <dd>{stages.length ? stages.map(([l, n]) => `${l} ${fmtInt(n as number)}`).join(' · ') : '진행 중 인원 없음'}</dd>
-            <dt>누적 진행</dt>
-            <dd>합격 <b>{fmtInt(j.docPass)}</b> · 전달 <b>{fmtInt(j.delivered)}</b> · 면접 <b>{fmtInt(j.interviews)}</b> · 입사 <b>{fmtInt(j.hiresAll)}</b></dd>
-            <dt>충원</dt>
+            <dt>{i.t('jdx.start')}</dt>
+            <dd>{j.startDate ? <>{i.fmtDay(j.startDate)}{j.days != null && <> · <b>D+{i.fmtInt(j.days)}</b></>}</> : i.t('jdx.noStart')}</dd>
+            <dt>{i.t('jdx.lastApp')}</dt>
+            <dd>{lastDays == null ? '–' : lastDays === 0 ? <b>{i.t('jdx.today')}</b> : <><b>{i.t('jdx.daysAgo', { n: i.fmtInt(lastDays) })}</b> ({i.fmtDay(j.lastAppDate!)})</>}</dd>
+            <dt>{i.t('jdx.stages')}</dt>
+            <dd>{stages.length ? stages.map(([l, n]) => `${l} ${i.fmtInt(n as number)}`).join(' · ') : i.t('jdx.noStages')}</dd>
+            <dt>{i.t('jdx.cum')}</dt>
+            <dd>{rich(i.t('jdx.cumVal', { a: i.fmtInt(j.docPass), b: i.fmtInt(j.delivered), c: i.fmtInt(j.interviews), d: i.fmtInt(j.hiresAll) }))}</dd>
+            <dt>{i.t('jdx.fill')}</dt>
             <dd>
               {j.headcount != null ? (
                 <>
-                  TO {fmtInt(j.headcount)}자리 중 <b>{fmtInt(j.hiresAll)}자리</b> 채움
-                  {j.dropped > 0 && <span className="dim"> · 이탈 {fmtInt(j.dropped)}자리</span>}
+                  {rich(i.t('jdx.fillVal', { to: i.fmtInt(j.headcount), n: i.fmtInt(j.hiresAll) }))}
+                  {j.dropped > 0 && <span className="dim">{i.t('jdx.fillDrop', { n: i.fmtInt(j.dropped) })}</span>}
                 </>
               ) : (
-                'TO 미기재'
+                i.t('jdx.noTo')
               )}
             </dd>
-            <dt>판정</dt>
+            <dt>{i.t('jdx.health')}</dt>
             <dd>
               {open && view ? (
                 <>
-                  <i className={`jdot ${view}`} /> <b>{HEALTH_META[view].label}</b> —{' '}
-                  {view === 'done' ? doneReason(j) : view === 'good' ? goodReason(j) : healthNote(j)}
+                  <i className={`jdot ${view}`} /> <b>{i.t(HEALTH_META[view].label)}</b> —{' '}
+                  {view === 'done' ? doneReason(i, j) : view === 'good' ? goodReason(i, j) : healthNote(i, j)}
                 </>
               ) : (
-                <>마감{j.status ? ` (${j.status})` : ''}</>
+                <>{i.t('jdx.closed')}{j.status ? ` (${j.status})` : ''}</>
               )}
             </dd>
           </dl>
@@ -170,17 +172,17 @@ function JdDetail({ j, open, colSpan }: { j: JdRow; open: boolean; colSpan: numb
 
 // 판정 사유 한 줄 — 문제 공고(정체·부족·초기)의 호버 툴팁 (숫자는 현재 걸려 있는 인원, 누적 아님)
 // 정체는 병목 위치를 함께 말한다: 기업 응답 없음(검토 체류만) vs 내부 처리(기업 단계 0)
-function healthNote(j: JdRow): string {
+function healthNote(i: I18n, j: JdRow): string {
   if (j.health === 'stall') {
     return j.curCompany > 0
-      ? `기업 응답 없음 — 검토 체류 ${fmtInt(j.curCompany)}명, 모집 ${j.days != null ? `D+${fmtInt(j.days)}` : '6주 이후'}인데 면접 전환 0`
-      : `내부 처리 정체 — 합격 후 대기 ${fmtInt(j.curPassed)}명 · 발송 대기 ${fmtInt(j.curReady)}명, 기업 단계 0명`
+      ? i.t('jd.note.stallCompany', { n: i.fmtInt(j.curCompany), d: j.days != null ? `D+${i.fmtInt(j.days)}` : i.t('jd.note.after6w') })
+      : i.t('jd.note.stallInternal', { a: i.fmtInt(j.curPassed), b: i.fmtInt(j.curReady) })
   }
   if (j.health === 'low')
     return j.appsAll === 0
-      ? '지원 0건 (기준: TO당 30건)'
-      : `TO당 지원 ${fmtInt(Math.round(j.appsAll / (j.headcount || 1)))}건뿐 (기준: TO당 30건)`
-  if (j.health === 'early') return `모집 D+${fmtInt(j.days ?? 0)} — 1주(D+7)까지 판정 유예`
+      ? i.t('jd.note.lowZero')
+      : i.t('jd.note.low', { n: i.fmtInt(Math.round(j.appsAll / (j.headcount || 1))) })
+  if (j.health === 'early') return i.t('jd.note.early', { n: i.fmtInt(j.days ?? 0) })
   return ''
 }
 
@@ -190,11 +192,11 @@ type Sort = { key: SortKey; dir: 1 | -1 }
 // 주차 구분선 (2026-07-29 회의: "주마다 구분선 — D+7, D+14") — 모집 시작순 정렬일 때만 그린다.
 // 6주(D+42)부터는 정체 판정 경계 너머라 한 묶음으로 접는다.
 const weekBucket = (days: number | null) => (days == null ? null : Math.min(Math.floor(days / 7), 6))
-const weekLabel = (b: number | null): [string, string] =>
-  b == null ? ['모집 시작일 미상', '']
-  : b === 0 ? ['모집 1주차', 'D+7 미만']
-  : b === 6 ? ['모집 6주 초과', 'D+42~']
-  : [`모집 ${b + 1}주차`, `D+${b * 7}~${b * 7 + 6}`]
+const weekLabel = (i: I18n, b: number | null): [string, string] =>
+  b == null ? [i.t('week.unknown'), '']
+  : b === 0 ? [i.t('week.first'), i.t('week.firstRange')]
+  : b === 6 ? [i.t('week.over6'), 'D+42~']
+  : [i.t('week.nth', { n: i.fmtInt(b + 1) }), `D+${b * 7}~${b * 7 + 6}`]
 
 // 기본 정렬 — 모집 시작 최근순. 다른 열을 세 번 클릭하면 여기로 돌아온다.
 const DEFAULT_SORT: Sort = { key: 'received', dir: -1 }
@@ -215,8 +217,9 @@ const sortVal = (j: JdRow, key: SortKey): string | number | null => {
 }
 
 function SortTh({
-  label, k, sort, onSort, src, srcLeft,
+  i, label, k, sort, onSort, src, srcLeft,
 }: {
+  i: I18n
   label: string
   k: SortKey
   sort: Sort
@@ -229,7 +232,7 @@ function SortTh({
     <th
       className={on ? 'sortable on' : 'sortable'}
       onClick={() => onSort(k)}
-      title="클릭해 정렬 (한 번 더 = 역순, 또 한 번 = 기본 정렬 — 모집 시작 최근순)"
+      title={i.t('th.sortTitle')}
       aria-sort={on ? (sort.dir === -1 ? 'descending' : 'ascending') : 'none'}
     >
       {label}
@@ -241,6 +244,7 @@ function SortTh({
 }
 
 export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 'closed' }) {
+  const i = useI18n()
   const open = mode === 'open'
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT)
   // 행 클릭 상세 (아코디언 — 한 번에 하나만)
@@ -291,67 +295,65 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
       if (vb == null) return -1
       const d =
         typeof va === 'string' || typeof vb === 'string'
-          ? String(va).localeCompare(String(vb), 'ko') * dir
+          ? String(va).localeCompare(String(vb), i.locale) * dir
           : (va - (vb as number)) * dir
       return d !== 0 ? d : tie(a, b)
     })
-  }, [jds, sort, open])
+  }, [jds, sort, open, i.locale])
   const filtering = open && only && selected.size > 0
   const shown = filtering ? rows.filter(j => selected.has(j.code)) : rows
   // 다른 열로 정렬하면 주차가 섞여 구분선이 무의미해진다 — 모집 시작순(기본 정렬 포함)일 때만
   const weekSep = open && sort.key === 'received'
 
-  if (!jds.length) return <EmptyState message="표시할 공고가 없습니다." />
+  if (!jds.length) return <EmptyState message={i.t('empty.jds')} />
 
   return (
     <>
       {open && (selected.size > 0 || only) && (
-        <div className="seltools" role="toolbar" aria-label="공고 선택 보기">
-          <span>
-            선택 <b>{fmtInt(selected.size)}</b>건
-          </span>
+        <div className="seltools" role="toolbar" aria-label={i.t('sel.aria')}>
+          <span>{rich(i.t('sel.count', { n: i.fmtInt(selected.size) }))}</span>
           <button
             type="button"
             className={only ? 'selbtn on' : 'selbtn'}
             disabled={!selected.size}
             onClick={() => saveSel(new Set(selected), !only)}
           >
-            {only ? '선택한 공고만 보는 중' : '선택한 공고만 보기'}
+            {only ? i.t('sel.onlyOn') : i.t('sel.only')}
           </button>
           <button type="button" className="selbtn" onClick={() => saveSel(new Set(), false)}>
-            선택 해제
+            {i.t('sel.clear')}
           </button>
         </div>
       )}
       {filtering && shown.length === 0 ? (
-        <EmptyState message="선택한 공고가 진행 중 목록에 없습니다 — 선택을 해제하거나 다시 선택하세요." />
+        <EmptyState message={i.t('sel.emptyFiltered')} />
       ) : (
         <div className="tbl-scroll">
           <table>
             <thead>
               <tr>
-                {open && <th className="selcell" aria-label="공고 선택" />}
-                <SortTh label="공고" k="company" sort={sort} onSort={onSort} src="jd.jd" srcLeft />
-                <SortTh label="모집 시작" k="received" sort={sort} onSort={onSort} src="jd.received" srcLeft />
-                {!open && <th>상태<SrcTip k="jd.status" /></th>}
-                <SortTh label="TO" k="to" sort={sort} onSort={onSort} src="jd.to" />
-                <SortTh label="지원" k="apps" sort={sort} onSort={onSort} src="jd.apps" />
-                <SortTh label="합격" k="docPass" sort={sort} onSort={onSort} src="pipe.docPass" />
-                <SortTh label="전달" k="delivered" sort={sort} onSort={onSort} src="pipe.delivered" />
-                <SortTh label="면접" k="interviews" sort={sort} onSort={onSort} src="pipe.interviews" />
-                <SortTh label="입사" k="hires" sort={sort} onSort={onSort} src="jd.filled" />
-                <SortTh label="충원율" k="fill" sort={sort} onSort={onSort} src="jd.fill" />
+                {open && <th className="selcell" aria-label={i.t('sel.colAria')} />}
+                <SortTh i={i} label={i.t('th.jd')} k="company" sort={sort} onSort={onSort} src="jd.jd" srcLeft />
+                <SortTh i={i} label={i.t('th.received')} k="received" sort={sort} onSort={onSort} src="jd.received" srcLeft />
+                {!open && <th>{i.t('th.status')}<SrcTip k="jd.status" /></th>}
+                <SortTh i={i} label={i.t('th.to')} k="to" sort={sort} onSort={onSort} src="jd.to" />
+                <SortTh i={i} label={i.t('th.apps')} k="apps" sort={sort} onSort={onSort} src="jd.apps" />
+                <SortTh i={i} label={i.t('th.pass')} k="docPass" sort={sort} onSort={onSort} src="pipe.docPass" />
+                <SortTh i={i} label={i.t('th.delivered')} k="delivered" sort={sort} onSort={onSort} src="pipe.delivered" />
+                <SortTh i={i} label={i.t('th.interviews')} k="interviews" sort={sort} onSort={onSort} src="pipe.interviews" />
+                <SortTh i={i} label={i.t('th.hires')} k="hires" sort={sort} onSort={onSort} src="jd.filled" />
+                <SortTh i={i} label={i.t('th.fill')} k="fill" sort={sort} onSort={onSort} src="jd.fill" />
               </tr>
             </thead>
             <tbody>
-              {shown.map((j, i) => {
+              {shown.map((j, idx) => {
                 const full = `${j.company} ${j.code}${j.title ? ` · ${j.title}` : ''}`
                 const view = jdView(j)
                 // 완료·순항은 툴팁 없음 (숫자 열이 이미 설명) — 문제/유예 공고만 호버로 판정 이유 노출
-                const note = open && view && view !== 'good' && view !== 'done' ? healthNote(j) : null
+                const note = open && view && view !== 'good' && view !== 'done' ? healthNote(i, j) : null
                 const expanded = xCode === j.code
                 const wb = weekBucket(j.days)
-                const [wkName, wkRange] = weekSep && (i === 0 || weekBucket(shown[i - 1].days) !== wb) ? weekLabel(wb) : ['', '']
+                const [wkName, wkRange] = weekSep && (idx === 0 || weekBucket(shown[idx - 1].days) !== wb) ? weekLabel(i, wb) : ['', '']
                 return (
                   <Fragment key={j.code}>
                   {wkName && (
@@ -373,7 +375,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                           type="checkbox"
                           checked={selected.has(j.code)}
                           onChange={() => toggleSel(j.code)}
-                          aria-label={`${j.company} ${j.code} 선택`}
+                          aria-label={i.t('sel.rowAria', { co: j.company, code: j.code })}
                         />
                       </td>
                     )}
@@ -381,7 +383,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                       <div className="cell-trunc" title={note ? undefined : `${full}${!open && j.status ? ` · ${j.status}` : ''}`}>
                         <span className="xchev" aria-hidden>▸</span>
                         {open && view && (
-                          <i className={`jdot ${view}`} title={`${HEALTH_META[view].label} — ${HEALTH_META[view].desc}`} />
+                          <i className={`jdot ${view}`} title={`${i.t(HEALTH_META[view].label)} — ${i.t(HEALTH_META[view].desc)}`} />
                         )}
                         <span className="tname">{j.company}</span>{' '}
                         <span className="tsub">{j.code}{j.title ? ` · ${j.title}` : ''}</span>
@@ -389,15 +391,15 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                       {note && j.health && (
                         <span className="tip" role="tooltip">
                           <span className="tipline">{full}</span>
-                          <b>{HEALTH_META[j.health].label}</b> — {note}
+                          <b>{i.t(HEALTH_META[j.health].label)}</b> — {note}
                         </span>
                       )}
                     </td>
-                    <td title={j.startDate ? '모집 시작일 (시트 Date Received, 미기재 시 최초 지원일)' : undefined}>
+                    <td title={j.startDate ? i.t('title.received') : undefined}>
                       {j.startDate ? (
                         <>
-                          {fmtDay(j.startDate)}
-                          {open && j.days != null && <span className="tsub"> · D+{fmtInt(j.days)}</span>}
+                          {i.fmtDay(j.startDate)}
+                          {open && j.days != null && <span className="tsub"> · D+{i.fmtInt(j.days)}</span>}
                         </>
                       ) : (
                         <span className="dim">–</span>
@@ -405,40 +407,45 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                     </td>
                     {!open && (
                       <td>
-                        <span className="tag closed" title={j.status || undefined}>마감</span>
+                        <span className="tag closed" title={j.status || undefined}>{i.t('tag.closed')}</span>
                       </td>
                     )}
-                    <td>{j.headcount != null ? fmtInt(j.headcount) : <span className="dim">–</span>}</td>
+                    <td>{j.headcount != null ? i.fmtInt(j.headcount) : <span className="dim">–</span>}</td>
                     {/* 주 숫자 = 시트(CANDIDATE DATA) 지원 건 + FYI 직접 지원(시트에 없음 — 제목 매칭 귀속).
                         FYI 몫이 있으면 툴팁에 분해해 운영이 시트와 대조할 때 헷갈리지 않게 한다 */}
                     <td
-                      title={`지원 ${fmtInt(j.apps)}건${
-                        j.appsFyi > 0 ? ` — 시트 ${fmtInt(j.apps - j.appsFyi)} + FYI 직접 ${fmtInt(j.appsFyi)}` : ' (시트 기준)'
-                      } · 고유 지원자 ${fmtInt(j.people)}명 · 오퍼 도달 ${fmtInt(j.offer)}명`}
+                      title={`${
+                        j.appsFyi > 0
+                          ? i.t('title.appsSplit', { n: i.fmtInt(j.apps), a: i.fmtInt(j.apps - j.appsFyi), b: i.fmtInt(j.appsFyi) })
+                          : i.t('title.appsSheet', { n: i.fmtInt(j.apps) })
+                      }${i.t('title.appsTail', { c: i.fmtInt(j.people), d: i.fmtInt(j.offer) })}`}
                     >
-                      {fmtInt(j.apps)}
+                      {i.fmtInt(j.apps)}
                     </td>
-                    <td>{fmtInt(j.docPass)}</td>
-                    <td>{fmtInt(j.delivered)}</td>
-                    <td>{fmtInt(j.interviews)}</td>
-                    <td title={'채운 자리 — KTC Ops Matching Status 의 Matches 기준 (이탈은 제외)'}>{fmtInt(j.hiresAll)}</td>
+                    <td>{i.fmtInt(j.docPass)}</td>
+                    <td>{i.fmtInt(j.delivered)}</td>
+                    <td>{i.fmtInt(j.interviews)}</td>
+                    <td title={i.t('title.hiresAll')}>{i.fmtInt(j.hiresAll)}</td>
                     <td
                       title={
                         j.headcount
-                          ? `충원 ${fmtInt(j.hiresAll)} / TO ${fmtInt(j.headcount)} · ${Math.round(
-                              (j.hiresAll / j.headcount) * 100
-                            )}%${j.dropped > 0 ? ` (이탈 ${fmtInt(j.dropped)})` : ''} — KTC Ops Matching Status 기준`
+                          ? `${i.t('title.fill', {
+                              n: i.fmtInt(j.hiresAll),
+                              to: i.fmtInt(j.headcount),
+                              p: Math.round((j.hiresAll / j.headcount) * 100),
+                            })}${j.dropped > 0 ? i.t('title.fillDrop', { n: i.fmtInt(j.dropped) }) : ''}${i.t('title.fillTail')}`
                           : undefined
                       }
                     >
                       {/* 완료 표시는 판정(진행 중 전용)과 별개 — 마감 표에서도 TO를 채웠는지는 같은 의미다 */}
                       <Meter
+                        i={i}
                         ratio={j.headcount ? j.hiresAll / j.headcount : null}
                         done={j.headcount != null && j.hiresAll >= j.headcount}
                       />
                     </td>
                   </tr>
-                  {expanded && <JdDetail j={j} open={open} colSpan={10} />}
+                  {expanded && <JdDetail i={i} j={j} open={open} colSpan={10} />}
                   </Fragment>
                 )
               })}

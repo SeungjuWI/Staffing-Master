@@ -11,7 +11,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { SRC, SRC_KIND_LABELS, srcHref, type SrcKey } from '@/lib/sources'
+import { SRC, srcHref, type SrcKey } from '@/lib/sources'
+import { useI18n } from './i18n-provider'
 
 const LinkCtx = createContext<Record<string, string>>({})
 
@@ -33,6 +34,7 @@ const GAP = 8      // 배지와 말풍선 사이 간격
 const NEED = 210   // 아래로 펼치는 데 필요한 여유 높이 (부족하면 위로 뒤집는다)
 
 export function SrcTip({ k, left }: { k: SrcKey; left?: boolean }) {
+  const i18n = useI18n()
   const links = useContext(LinkCtx)
   const s = SRC[k]
   const ref = useRef<HTMLSpanElement>(null)
@@ -99,7 +101,7 @@ export function SrcTip({ k, left }: { k: SrcKey; left?: boolean }) {
       // 부모(정렬 안내 등)의 기본 title 툴팁이 배지 위에서 겹쳐 뜨는 것을 막는다
       title=""
       role="button"
-      aria-label="데이터 출처 보기"
+      aria-label={i18n.t('srcTip.aria')}
       aria-expanded={pos != null}
       onMouseEnter={open}
       onMouseLeave={close}
@@ -131,18 +133,18 @@ export function SrcTip({ k, left }: { k: SrcKey; left?: boolean }) {
             // 말풍선이 먼저 사라져 링크의 click 이 아예 안 나는 일을 막는다
             onPointerDown={open}
           >
-            <span className="src-t">데이터 출처</span>
+            <span className="src-t">{i18n.t('srcTip.title')}</span>
             {s.lines.map((l, i) => {
               const href = srcHref(links, l)
               const body = (
                 <>
-                  <b>{l.sys}</b>
-                  {l.loc && <> {l.loc}</>}
+                  <b>{i18n.t(l.sys)}</b>
+                  {l.loc && <> {i18n.t(l.loc)}</>}
                 </>
               )
               return (
                 <span className="src-row" key={i}>
-                  <em className={`src-k ${l.k}`}>{SRC_KIND_LABELS[l.k]}</em>
+                  <em className={`src-k ${l.k}`}>{i18n.t(`srcKind.${l.k}`)}</em>
                   {href ? (
                     <a className="src-body lk" href={href} target="_blank" rel="noreferrer">
                       {body}
@@ -154,7 +156,7 @@ export function SrcTip({ k, left }: { k: SrcKey; left?: boolean }) {
                 </span>
               )
             })}
-            {s.note && <span className="src-note">{s.note}</span>}
+            {s.note && <span className="src-note">{i18n.t(s.note)}</span>}
           </span>,
           document.body,
         )}

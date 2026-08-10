@@ -58,9 +58,9 @@ export function mockData(): MasterData {
         { key: 'people', label: '지원자', count: 1246 },
         { key: 'screened', label: '스크리닝 합격', count: 323 },
         { key: 'delivered', label: '기업 전달', count: 158 },
-        { key: 'interview', label: '면접', count: 58, note: 'Master INTERVIEW 탭 기준' },
+        { key: 'interview', label: '면접', count: 58, note: 'funnel.note.mockInterview' },
         { key: 'offer', label: '오퍼·계약', count: 22 },
-        { key: 'hired', label: '입사', count: 17, note: 'Ops Employee 탭 기준' },
+        { key: 'hired', label: '입사', count: 17, note: 'funnel.note.mockHired' },
       ],
       inProgress: { screeningQueue: 214, screenPassed: 96, readyToForward: 26, sentToCompany: 48, interviewing: 14, offer: 5 },
       jds: [

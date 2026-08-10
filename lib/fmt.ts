@@ -1,46 +1,9 @@
-// 숫자 표기 — 대표님이 읽는 화면이므로 한국식 단위(만원/억원)로 압축한다.
+// 로케일 무관 표기·상수만 남긴 파일 — 숫자·날짜·원화 등 로케일 의존 포맷터와 채널 라벨은
+// lib/i18n.ts 의 getI18n(locale) 번들로 이동했다 (서버는 prop, 클라이언트는 useI18n 으로 받는다).
 
-export const fmtInt = (n: number) => n.toLocaleString('ko-KR')
-
+// % 표기는 전 로케일 공통 (소수점 '.' 고정 — 대시보드 숫자 비교용)
 export const fmtPct = (r: number | null | undefined, digits = 1) =>
   r == null || !Number.isFinite(r) ? '–' : `${(r * 100).toFixed(digits)}%`
-
-// KRW: 1.2억원 / 1,420만원 / 12,621원 (10만원 미만은 원 단위 그대로 — CPA 비교용)
-export function fmtKrw(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return '–'
-  const abs = Math.abs(n)
-  if (abs >= 1e8) return `${(n / 1e8).toFixed(1)}억원`
-  if (abs >= 1e5) return `${Math.round(n / 1e4).toLocaleString('ko-KR')}만원`
-  return `${Math.round(n).toLocaleString('ko-KR')}원`
-}
-
-export const fmtUsd = (n: number | null | undefined) =>
-  n == null || !Number.isFinite(n) ? '–' : `$${Math.round(n).toLocaleString('en-US')}`
-
-// '2026-07' → '7월 (26)'
-export function fmtMonth(m: string): string {
-  const [y, mo] = m.split('-')
-  return `${parseInt(mo)}월`
-}
-export function fmtMonthFull(m: string): string {
-  const [y, mo] = m.split('-')
-  return `${y}년 ${parseInt(mo)}월`
-}
-
-// VN(UTC+7) 기준 올해 — 서버(UTC)·보는 사람 브라우저가 어디든 연도 판정은 베트남 기준
-const vnYear = () => new Date(Date.now() + 7 * 3600000).getUTCFullYear()
-
-// 'YYYY-MM-DD' → '5월 4일' (올해가 아니면 '25년 11월 12일')
-export function fmtDay(d: string, nowYear = vnYear()): string {
-  const [y, mo, day] = d.split('-').map(Number)
-  return y === nowYear ? `${mo}월 ${day}일` : `${String(y).slice(2)}년 ${mo}월 ${day}일`
-}
-
-// 'YYYY-MM-DD' → '2026년 3월' (수집 시작 시점 표기)
-export function fmtSinceMonth(d: string): string {
-  const [y, mo] = d.split('-').map(Number)
-  return `${y}년 ${mo}월`
-}
 
 // ── 액션 분리선 ─────────────────────────────────────────────
 // 2026-07-28 — FYI 가짜 공고 정리와 KTC 집중 집행이 이날부터 시작됐다.
@@ -50,41 +13,10 @@ export function fmtSinceMonth(d: string): string {
 export const ACTION_DAY = '2026-07-28'
 export const prevDay = (d: string) =>
   new Date(new Date(`${d}T00:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10)
-// 'YYYY-MM-DD' → '7/28' (라벨용 축약)
+// 'YYYY-MM-DD' → '7/28' (라벨용 축약 — 전 로케일 공통)
 export const fmtSlashDay = (d: string) => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`
 export const ACTION_LABEL = fmtSlashDay(ACTION_DAY) // '7/28'
 export const ACTION_PREV_LABEL = fmtSlashDay(prevDay(ACTION_DAY)) // '7/27'
-
-// 절대 시각 표기는 베트남 시간(ICT) 고정 + 라벨 — 대시보드·ATS 와 같은 기준 (스태핑 표준)
-export function fmtDateTime(iso: string): string {
-  const d = new Date(iso)
-  return `${d.toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' })} (ICT)`
-}
-
-// 채널 키 → 화면 표기
-const CHANNEL_LABELS: Record<string, string> = {
-  'ITviec-api': 'ITviec',
-  'it-viec-manual': 'ITviec (수동)',
-  'top-dev': 'TopDev',
-  'top-cv': 'TopCV',
-  'jobs-go': 'JobsGO',
-  glint: 'Glints',
-  'landing-page': '랜딩페이지',
-  FYI: 'FYI (자체 플랫폼)', // 시대 분리 전 키 — 공고 상세 도넛 등 시대 무관 표기용
-  // FYI 시대 분리 (2026-07-29 회의 · 07-30 일자 경계로 교체):
-  // 액션 전은 KTC 외 공고가 섞인 혼합 집계, 액션 후는 KTC 공고만 남긴 새 집계
-  'FYI-pre': `FYI ~${ACTION_PREV_LABEL}`,
-  'FYI-post': `FYI ${ACTION_LABEL}~`,
-  LinkedIn: 'LinkedIn',
-  YBOX: 'YBOX',
-  Vieclam24h: 'Vieclam24h',
-  'legacy-sheet': '구 시트',
-  'Form Responses 1': '구글폼',
-  _unattributed: '미귀속 (파이프라인 외)',
-  '(미상)': '채널 미상',
-}
-// 내부 코드값은 화면에 노출 금지 — 매핑에 없는 external-* 류는 일반명으로 감춘다
-export const channelLabel = (key: string) => CHANNEL_LABELS[key] || (/^external-/i.test(key) ? '외부 유입' : key)
 
 // 채널 성격 — 유료(게재비·광고 집행) / 자사(우리 플랫폼) / 무료(무료 게재)
 const CHANNEL_KIND: Record<string, 'paid' | 'own' | 'free'> = {
@@ -102,5 +34,5 @@ const CHANNEL_KIND: Record<string, 'paid' | 'own' | 'free'> = {
   YBOX: 'free',
   Vieclam24h: 'free',
 }
-export const CHANNEL_KIND_LABELS = { paid: '유료', own: '자사', free: '무료' } as const
-export const channelKind = (key: string): 'paid' | 'own' | 'free' | null => CHANNEL_KIND[key] ?? null
+export type ChannelKind = 'paid' | 'own' | 'free'
+export const channelKind = (key: string): ChannelKind | null => CHANNEL_KIND[key] ?? null
