@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>스태핑 마스터 대시보드 — 데이터 관계도</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+  :root {
+    --ink: #1a1c22; --sub: #4d525c; --faint: #878d97;
+    --line: #e4e7ec; --panel: #f6f7f9; --surface: #ffffff;
+    --accent: #515ce4;
+    --c-master: #3182f6;  /* Master 시트 (공고 원장) */
+    --c-ops: #099268;     /* KTC Ops 시트 (TO·입사·매출) */
+    --c-cand: #e8590c;    /* CANDIDATE DATA 시트 (지원 기록) */
+    --c-cost: #0891b2;    /* 비용 시트 (광고비) */
+    --c-ktc: #7048e8;     /* ktc-support (채용 진행) */
+    --c-fyi: #d6336c;     /* FYI (salary-fyi.com) */
+    --c-fx: #6b7280;      /* 환율 */
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    color: var(--ink); background: #d8dbe1; font-size: 10px; line-height: 1.45;
+    font-feature-settings: "tnum"; word-break: keep-all;
+  }
+  @page { size: A4 landscape; margin: 0; }
+  .page {
+    width: 297mm; height: 210mm; background: var(--surface);
+    padding: 8.5mm 11mm 7mm; overflow: hidden; position: relative;
+    display: flex; flex-direction: column;
+  }
+  @media print { .page { page-break-after: always; } .page:last-child { page-break-after: auto; } }
+  @media screen { .page { margin: 16px auto; box-shadow: 0 8px 30px rgba(20,22,40,.18); } }
+
+  /* ── 헤더 ─────────────────────────────── */
+  .hd { display: flex; align-items: flex-end; gap: 14px; padding-bottom: 8px; border-bottom: 2px solid var(--ink); margin-bottom: 8px; }
+  .hd .mark { width: 26px; height: 26px; border-radius: 7px; background: linear-gradient(135deg, #6d79f0, #3f45c8); flex: none; margin-bottom: 2px; }
+  .hd h1 { font-size: 19px; font-weight: 800; letter-spacing: -.02em; line-height: 1.15; }
+  .hd .desc { font-size: 10.5px; color: var(--sub); margin-top: 3px; }
+  .hd .meta { margin-left: auto; text-align: right; font-size: 9px; color: var(--faint); line-height: 1.6; white-space: nowrap; }
+  .hd .meta b { color: var(--sub); font-weight: 600; }
+  .hd.small { border-bottom-width: 1px; border-color: var(--line); }
+  .hd.small h1 { font-size: 14.5px; }
+
+  /* ── 페이지1: 다이어그램 ───────────────── */
+  .diagram { position: relative; flex: 1; min-height: 0; }
+  #wires { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+  .dgrid { position: relative; z-index: 1; display: grid; grid-template-columns: 300px 1fr 396px; grid-template-rows: auto 1fr; height: 100%; }
+  .dlab { font-size: 9px; font-weight: 800; letter-spacing: .07em; color: var(--faint); text-transform: uppercase; padding-bottom: 6px; }
+  .dlab b { color: var(--ink); font-size: 10px; letter-spacing: 0; margin-right: 5px; }
+  .dlab.c { text-align: center; }
+  .dcol { display: flex; flex-direction: column; min-height: 0; }
+  .dcol.left { justify-content: space-between; gap: 6px; }
+  .dcol.rt { justify-content: center; gap: 42px; }
+
+  /* 노드 — 색 헤더 + 내용 행 */
+  .node { background: var(--surface); border: 1px solid color-mix(in srgb, var(--c) 30%, var(--line)); border-radius: 9px; overflow: hidden; box-shadow: 0 1px 3px rgba(18,20,40,.05); }
+  .node .nhead { display: flex; align-items: center; gap: 5px; padding: 3.5px 9px; background: color-mix(in srgb, var(--c) 9%, #fff); border-bottom: 1px solid color-mix(in srgb, var(--c) 22%, #fff); }
+  .node .nhead .nm { font-size: 10.5px; font-weight: 800; letter-spacing: -.01em; color: var(--c); }
+  .node .nhead .kind { font-size: 7px; font-weight: 800; letter-spacing: .05em; color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 40%, #fff); border-radius: 3px; padding: 0 3.5px; background: #fff; }
+  .node .nhead .who { margin-left: auto; font-size: 7.5px; color: var(--faint); font-weight: 600; white-space: nowrap; }
+  .node .frow { padding: 2.5px 9px; font-size: 8.7px; color: var(--sub); border-top: 1px dashed #eef0f4; display: flex; align-items: baseline; gap: 5px; }
+  .node .frow:first-of-type { border-top: none; }
+  .node .frow b { color: var(--ink); font-weight: 700; }
+  .node .frow.file { color: var(--faint); font-size: 8px; }
+  .node .frow.file code { font-family: ui-monospace, Menlo, monospace; font-size: 7.6px; }
+  .node .frow .dot { flex: none; width: 4px; height: 4px; border-radius: 2px; background: var(--c); opacity: .55; align-self: center; }
+  .node.api { border-style: dashed; }
+  .node.api .frow { border-top: none; }
+
+  /* 화면 노드 */
+  .out { background: var(--surface); border: 1px solid #cdd2f0; border-radius: 9px; overflow: hidden; box-shadow: 0 1px 3px rgba(18,20,40,.05); }
+  .out .nhead { display: flex; align-items: center; gap: 6px; padding: 4.5px 10px; background: rgba(81,92,228,.07); border-bottom: 1px solid rgba(81,92,228,.18); }
+  .out .nhead .nm { font-size: 11px; font-weight: 800; letter-spacing: -.01em; }
+  .out .nhead .tag { font-size: 7.5px; font-weight: 700; color: var(--accent); background: #fff; border: 1px solid rgba(81,92,228,.35); border-radius: 3px; padding: 0 4px; }
+  .out .row { display: flex; align-items: baseline; gap: 5px; font-size: 9.6px; color: var(--sub); padding: 5.5px 11px; border-top: 1px solid #f0f1f6; }
+  .out .row:first-of-type { border-top: none; }
+  .out .row .m { color: var(--ink); font-weight: 600; }
+  .out .row .chips { margin-left: auto; white-space: nowrap; }
+
+  .chip { display: inline-block; border-radius: 4px; padding: .5px 4.5px; font-size: 8px; font-weight: 700; color: var(--cc); background: color-mix(in srgb, var(--cc) 9%, #fff); border: 1px solid color-mix(in srgb, var(--cc) 22%, #fff); margin-left: 2px; }
+  .ch-master { --cc: var(--c-master); } .ch-ops { --cc: var(--c-ops); } .ch-cand { --cc: var(--c-cand); }
+  .ch-cost { --cc: var(--c-cost); } .ch-ktc { --cc: var(--c-ktc); } .ch-fyi { --cc: var(--c-fyi); }
+  .ch-fx { --cc: var(--c-fx); } .ch-calc { --cc: #444a56; }
+
+  /* 하단 스트립: 숫자가 오는 길 */
+  .journey { margin-top: 8px; background: var(--panel); border-radius: 10px; padding: 7px 10px 8px; }
+  .journey .t { font-size: 9px; font-weight: 800; letter-spacing: .06em; color: var(--faint); text-transform: uppercase; margin-bottom: 5px; }
+  .jflow { display: grid; grid-template-columns: 1fr 14px 1.25fr 14px 1.2fr 14px 1.25fr 14px 1fr; gap: 0; align-items: stretch; }
+  .jstep { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px 6px; }
+  .jstep > b { display: block; font-size: 9.5px; font-weight: 800; margin-bottom: 1px; }
+  .jstep span { font-size: 8.5px; color: var(--sub); }
+  .jstep span b { font-weight: 700; }
+  .jarr { display: flex; align-items: center; justify-content: center; color: #b6bac4; font-size: 11px; font-weight: 700; }
+
+  .foot { margin-top: 6px; display: flex; font-size: 8px; color: var(--faint); }
+  .foot .r { margin-left: auto; }
+
+  /* ── 페이지2 ──────────────────────────── */
+  .funnel { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-bottom: 10px; }
+  .fstage { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px 6px; position: relative; background: var(--surface); }
+  .fstage::after { content: "→"; position: absolute; right: -8.5px; top: 50%; transform: translateY(-58%); color: #b6bac4; font-size: 11px; font-weight: 700; z-index: 1; }
+  .fstage:last-child::after { content: none; }
+  .fstage b { display: block; font-size: 11px; font-weight: 800; }
+  .fstage .st { font-size: 8.5px; color: var(--sub); margin-top: 2px; line-height: 1.4; }
+  .fstage:nth-child(n+2) { border-top: 2.5px solid var(--c-ktc); }
+  .fstage:first-child { border-top: 2.5px solid var(--c-cand); }
+  .fnote { font-size: 9px; color: var(--faint); margin: -4px 0 12px; }
+  .fnote b { color: var(--sub); }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; flex: 1; min-height: 0; align-content: start; }
+  .sect { margin-bottom: 13px; }
+  .sect h3 { font-size: 11px; font-weight: 800; letter-spacing: -.01em; margin-bottom: 5px; }
+  .sect h3 .sm { font-weight: 600; color: var(--faint); font-size: 8.5px; margin-left: 4px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 8.5px; font-weight: 700; color: var(--faint); letter-spacing: .03em; padding: 2px 6px 3px 0; border-bottom: 1px solid var(--ink); }
+  td { font-size: 9.3px; color: var(--sub); padding: 3.5px 6px 3.5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.m { color: var(--ink); font-weight: 600; white-space: nowrap; }
+  td.s { white-space: nowrap; }
+  td .chip { margin-left: 0; margin-right: 2px; }
+
+  .boxes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 2px; }
+  .box { background: var(--panel); border-radius: 10px; padding: 8px 11px 9px; }
+  .box h4 { font-size: 10px; font-weight: 800; margin-bottom: 3px; }
+  .box ul { list-style: none; }
+  .box li { font-size: 9.2px; color: var(--sub); padding-left: 9px; position: relative; margin-top: 2px; }
+  .box li::before { content: ""; position: absolute; left: 0; top: 5px; width: 4px; height: 4px; border-radius: 2px; background: var(--accent); opacity: .5; }
+  .box li b { color: var(--ink); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ 1쪽 · 관계도 ═══════════════ -->
+<section class="page" id="p1">
+  <header class="hd">
+    <div class="mark"></div>
+    <div>
+      <h1>스태핑 마스터 대시보드 — 데이터 관계도</h1>
+      <div class="desc">대시보드의 숫자는 어디서 와서, 어떻게 하나의 화면으로 모이는가</div>
+    </div>
+    <div class="meta">
+      <div><b>staffing-master.vercel.app</b></div>
+      <div>2026년 8월 19일 기준 · 1/2</div>
+    </div>
+  </header>
+
+  <div class="diagram" id="diagram">
+    <svg id="wires"></svg>
+    <div class="dgrid">
+      <div class="dlab"><b>원본</b>사람과 시스템이 데이터를 만드는 곳</div>
+      <div class="dlab c">선을 따라가면 출처가 보인다</div>
+      <div class="dlab"><b>대시보드 화면</b>각 줄의 색선 = 그 숫자의 출처</div>
+
+      <!-- 원본 노드 -->
+      <div class="dcol left">
+        <div class="node" id="n-master" style="--c: var(--c-master)">
+          <div class="nhead"><span class="nm">Master 시트</span><span class="kind">시트</span><span class="who">운영팀이 기입</span></div>
+          <div class="frow file"><code>V2_KTC2026_MASTER_ADJUSTED</code> › JD EXECUTION 탭</div>
+          <div class="frow"><span class="dot"></span><b>공고 목록의 원본</b> — 공고코드·회사·포지션</div>
+          <div class="frow"><span class="dot"></span>모집 시작일 · 모집 중/마감 상태</div>
+        </div>
+
+        <div class="node" id="n-ops" style="--c: var(--c-ops)">
+          <div class="nhead"><span class="nm">KTC Ops 시트</span><span class="kind">시트</span><span class="who">운영팀이 기입</span></div>
+          <div class="frow file"><code>2026 KTC Ops.</code> › 탭 3개</div>
+          <div class="frow"><span class="dot"></span><b>Matching Status</b> — 뽑을 인원(TO)·채워진 자리·이탈</div>
+          <div class="frow"><span class="dot"></span><b>Employee</b> — 입사자 명단, 재직 중인지 여부</div>
+          <div class="frow"><span class="dot"></span><b>매출현황</b> — 실제 발생한 매출·이익</div>
+        </div>
+
+        <div class="node" id="n-cand" style="--c: var(--c-cand)">
+          <div class="nhead"><span class="nm">CANDIDATE DATA 시트</span><span class="kind">시트</span><span class="who">운영팀이 기입</span></div>
+          <div class="frow file"><code>CANDIDATE DATA [KTC 2026]</code> › 채널별 탭</div>
+          <div class="frow"><span class="dot"></span><b>모든 지원 기록의 원본</b> — 1줄 = 지원서 1건</div>
+          <div class="frow"><span class="dot"></span>탭 하나 = 채널 하나 (랜딩·ITviec·TopDev·LinkedIn·JobsGO…)</div>
+        </div>
+
+        <div class="node" id="n-cost" style="--c: var(--c-cost)">
+          <div class="nhead"><span class="nm">비용 시트</span><span class="kind">시트</span><span class="who">유진님 관리</span></div>
+          <div class="frow file"><code>FYI - 마케팅 데이터 정리</code></div>
+          <div class="frow"><span class="dot"></span><b>채널별 광고비</b> — 청구서·LinkedIn·Meta 캠페인</div>
+          <div class="frow"><span class="dot"></span>베트남 동(VND) 금액은 원화로 바꿔서 집계</div>
+        </div>
+
+        <div class="node" id="n-ktc" style="--c: var(--c-ktc)">
+          <div class="nhead"><span class="nm">ktc-support</span><span class="kind">시스템</span><span class="who">매칭 스쿼드가 갱신</span></div>
+          <div class="frow file">ktc-support.vercel.app — 채용 진행을 관리하는 화면</div>
+          <div class="frow"><span class="dot"></span><b>지원자가 지금 어느 단계인지</b>의 기준</div>
+          <div class="frow"><span class="dot"></span>스크리닝 합격 → 기업 전달 → 면접 → 오퍼 → 입사</div>
+        </div>
+
+        <div class="node" id="n-fyi" style="--c: var(--c-fyi)">
+          <div class="nhead"><span class="nm">FYI</span><span class="kind">시스템</span><span class="who">자동으로 쌓임</span></div>
+          <div class="frow file">salary-fyi.com — 우리 채용 플랫폼의 기록</div>
+          <div class="frow"><span class="dot"></span><b>FYI에서 바로 넣은 지원</b> · 베트남 기업 자체 공고</div>
+          <div class="frow"><span class="dot"></span><b>인재풀</b> — 이력서 등록·공개 현황</div>
+        </div>
+
+        <div class="node api" id="n-fx" style="--c: var(--c-fx)">
+          <div class="frow"><span class="dot"></span><b>오늘의 환율</b> — 동(VND) 광고비를 원화로 바꿀 때만 사용</div>
+        </div>
+      </div>
+
+      <!-- 가운데는 연결선이 지나가는 자리 -->
+      <div></div>
+
+      <!-- 화면 노드 -->
+      <div class="dcol rt">
+        <div class="out" id="out-korea">
+          <div class="nhead"><span class="nm">한국 매칭</span><span class="tag">기본 탭</span></div>
+          <div class="row" id="r-k-jd"><span class="m">공고 · 모집 시작 · 상태</span><span class="chips"><span class="chip ch-master">Master</span></span></div>
+          <div class="row" id="r-k-to"><span class="m">TO · 충원 · 이탈</span><span class="chips"><span class="chip ch-ops">Ops</span></span></div>
+          <div class="row" id="r-k-apps"><span class="m">지원</span><span class="chips"><span class="chip ch-cand">CAND</span><span class="chip ch-fyi">FYI</span></span></div>
+          <div class="row" id="r-k-pipe"><span class="m">합격 · 전달 · 면접 · 입사</span><span class="chips"><span class="chip ch-ktc">ktc-support</span></span></div>
+          <div class="row" id="r-k-co"><span class="m">기업별 성과 (매출·이익)</span><span class="chips"><span class="chip ch-ops">Ops</span></span></div>
+        </div>
+
+        <div class="out" id="out-talent">
+          <div class="nhead"><span class="nm">인재·채널</span></div>
+          <div class="row" id="r-t-ch"><span class="m">채널 · 지원 건 · 추이</span><span class="chips"><span class="chip ch-cand">CAND</span><span class="chip ch-fyi">FYI</span></span></div>
+          <div class="row" id="r-t-ppl"><span class="m">지원자 · 단계별 인원</span><span class="chips"><span class="chip ch-ktc">ktc-support</span></span></div>
+          <div class="row" id="r-t-spend"><span class="m">지출 · CPA · 채용당 비용</span><span class="chips"><span class="chip ch-cost">비용</span><span class="chip ch-fx">환율</span></span></div>
+          <div class="row" id="r-t-pool"><span class="m">인재풀 (이력서)</span><span class="chips"><span class="chip ch-fyi">FYI</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="journey">
+    <div class="t">숫자가 태어나서 화면까지 오는 길</div>
+    <div class="jflow">
+      <div class="jstep"><b>지원 발생</b><span>후보자가 랜딩·ITviec·TopDev·LinkedIn·JobsGO·FYI에서 지원</span></div>
+      <div class="jarr">→</div>
+      <div class="jstep"><b>기록</b><span>채널로 온 지원은 운영이 <b style="color:var(--c-cand)">CANDIDATE 시트</b>에 기록 · FYI 지원은 <b style="color:var(--c-fyi)">FYI</b>에 자동 저장</span></div>
+      <div class="jarr">→</div>
+      <div class="jstep"><b>진행</b><span>운영이 <b style="color:var(--c-ktc)">ktc-support</b>에서 스크리닝→전달→면접→오퍼→입사 단계를 갱신</span></div>
+      <div class="jarr">→</div>
+      <div class="jstep"><b>성사 기록</b><span>입사·이탈·매출은 운영이 <b style="color:var(--c-ops)">KTC Ops 시트</b>에 기입</span></div>
+      <div class="jarr">→</div>
+      <div class="jstep"><b>대시보드</b><span>전부 모아 하나의 화면으로 — 1분 안에 최신화</span></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div>화면의 각 지표 옆 <b>ⓘ 표시</b>에 마우스를 올리면 출처가 뜨고, 클릭하면 그 원본 시트가 바로 열린다.</div>
+    <div class="r">Staffing Master · 데이터 관계도 1/2</div>
+  </div>
+</section>
+
+<!-- ═══════════════ 2쪽 · 지표별 출처 상세 ═══════════════ -->
+<section class="page" id="p2">
+  <header class="hd small">
+    <div>
+      <h1>지표별 출처 상세</h1>
+      <div class="desc">"이 숫자는 정확히 어디서 오나" — 화면의 ⓘ 표시와 같은 내용</div>
+    </div>
+    <div class="meta"><div>2026년 8월 19일 기준 · 2/2</div></div>
+  </header>
+
+  <div class="funnel">
+    <div class="fstage"><b>지원</b><div class="st">시트에 기록된 지원<br>+ FYI에서 바로 넣은 지원</div></div>
+    <div class="fstage"><b>스크리닝 합격</b><div class="st">서류 검토 통과</div></div>
+    <div class="fstage"><b>기업 전달</b><div class="st">이력서를 기업에 보냄</div></div>
+    <div class="fstage"><b>면접</b><div class="st">기업 면접 진행</div></div>
+    <div class="fstage"><b>오퍼</b><div class="st">합격 통보 받음</div></div>
+    <div class="fstage"><b>입사</b><div class="st">최종 입사</div></div>
+  </div>
+  <div class="fnote"><b>스크리닝 합격부터 입사까지는 전부 ktc-support의 기록.</b> 각 숫자는 "그 단계까지 간 적 있는 사람 수"라서 왼쪽이 항상 크거나 같다. 면접 후 탈락한 사람은 따로 남지 않아서 면접 숫자는 실제보다 적을 수 있음.</div>
+
+  <div class="grid2">
+    <div>
+      <div class="sect">
+        <h3>한국 매칭 — 공고 표</h3>
+        <table>
+          <tr><th>화면 지표</th><th>어디서</th><th>어떻게</th></tr>
+          <tr><td class="m">공고 (코드·회사·포지션)</td><td class="s"><span class="chip ch-master">Master</span>JD EXECUTION 탭</td><td>공고 목록 원장 그대로</td></tr>
+          <tr><td class="m">모집 시작 (D+N)</td><td class="s"><span class="chip ch-master">Master</span>JD EXECUTION 탭</td><td>공고를 받은 날짜 — 비어 있으면 첫 지원일로 대신</td></tr>
+          <tr><td class="m">상태 (모집 중 / 마감)</td><td class="s"><span class="chip ch-master">Master</span>JD EXECUTION 탭</td><td>시트에 적힌 공고 상태 그대로</td></tr>
+          <tr><td class="m">TO</td><td class="s"><span class="chip ch-ops">Ops</span>Matching Status 탭</td><td>뽑기로 한 인원 — 여기 없으면 공고 원장의 인원수 사용</td></tr>
+          <tr><td class="m">지원</td><td class="s"><span class="chip ch-cand">CAND</span><span class="chip ch-fyi">FYI</span></td><td>시트에 기록된 지원 + FYI에서 바로 넣은 지원</td></tr>
+          <tr><td class="m">합격·전달·면접·입사 열</td><td class="s"><span class="chip ch-ktc">ktc-support</span></td><td>채용 단계 기록 (위 퍼널과 같은 기준)</td></tr>
+          <tr><td class="m">충원 · 충원율</td><td class="s"><span class="chip ch-ops">Ops</span>Matching Status 탭</td><td>채워진 자리 ÷ TO — 입사자가 이탈하면 다시 빈자리로 침</td></tr>
+          <tr><td class="m">판정 점 (완료~초기)</td><td class="s"><span class="chip ch-calc">계산</span></td><td>시트에 있는 값이 아니라 위 숫자들로 매기는 상태 표시</td></tr>
+        </table>
+      </div>
+
+      <div class="sect">
+        <h3>한국 매칭 — 기업별 성과</h3>
+        <table>
+          <tr><th>화면 지표</th><th>어디서</th><th>어떻게</th></tr>
+          <tr><td class="m">기업 · 입사 · 재직</td><td class="s"><span class="chip ch-ops">Ops</span>Employee 탭</td><td>입사자 명단 — 재직 중인지, 이탈했는지 포함</td></tr>
+          <tr><td class="m">매출 · 이익</td><td class="s"><span class="chip ch-ops">Ops</span>매출현황 탭</td><td>실제 발생한 매출과 이익 (앞으로 받을 계약 총액이 아님)</td></tr>
+          <tr><td class="m">집계 범위</td><td class="s"><span class="chip ch-calc">원칙</span></td><td>우리 채용 과정을 거쳐 입사한 사람만 — 다른 경로 입사는 따로 표기</td></tr>
+        </table>
+      </div>
+
+      <div class="sect">
+        <h3>베트남 매칭 <span class="sm">(준비 중 탭 — 베트남 기업이 FYI에 직접 올린 공고)</span></h3>
+        <table>
+          <tr><th>화면 지표</th><th>어디서</th><th>어떻게</th></tr>
+          <tr><td class="m">공고 · 기업 · 지원</td><td class="s"><span class="chip ch-fyi">FYI</span></td><td>베트남 기업이 직접 올린 공고와 그 지원 기록</td></tr>
+          <tr><td class="m">열람</td><td class="s"><span class="chip ch-fyi">FYI</span></td><td>기업이 지원서를 열어본 횟수</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <div class="sect">
+        <h3>인재·채널 — 채널 표</h3>
+        <table>
+          <tr><th>화면 지표</th><th>어디서</th><th>어떻게</th></tr>
+          <tr><td class="m">채널</td><td class="s"><span class="chip ch-cand">CAND</span>탭 이름</td><td>시트의 탭 하나 = 채널 하나</td></tr>
+          <tr><td class="m">지원 건</td><td class="s"><span class="chip ch-cand">CAND</span><span class="chip ch-fyi">FYI</span></td><td>시트에 기록된 지원 + FYI에서 바로 넣은 지원</td></tr>
+          <tr><td class="m">지원자 (고유 인재)</td><td class="s"><span class="chip ch-ktc">ktc-support</span></td><td>같은 사람이 여러 번 지원해도 1명 — 처음 들어온 채널의 실적으로 침</td></tr>
+          <tr><td class="m">스크리닝~입사 열</td><td class="s"><span class="chip ch-ktc">ktc-support</span></td><td>채용 단계 기록 (위 퍼널과 같은 기준)</td></tr>
+          <tr><td class="m">지출</td><td class="s"><span class="chip ch-cost">비용</span><span class="chip ch-fx">환율</span></td><td>채널별 광고비 — 동(VND) 청구서는 원화로 환산, LinkedIn은 KTC 몫만</td></tr>
+          <tr><td class="m">CPA · 채용당 비용</td><td class="s"><span class="chip ch-calc">계산</span></td><td>지출 ÷ 지원자 · 지출 ÷ 입사</td></tr>
+          <tr><td class="m">월별 · 일별 추이</td><td class="s"><span class="chip ch-cand">CAND</span><span class="chip ch-fyi">FYI</span></td><td>지원한 날짜 기준 (베트남 시간)</td></tr>
+        </table>
+      </div>
+
+      <div class="sect">
+        <h3>인재·채널 — 인재풀</h3>
+        <table>
+          <tr><th>화면 지표</th><th>어디서</th><th>어떻게</th></tr>
+          <tr><td class="m">이력서 등록 · 공개</td><td class="s"><span class="chip ch-fyi">FYI</span></td><td>FYI에 이력서를 올린 인재 수 · 그중 공개로 설정한 수</td></tr>
+          <tr><td class="m">지원자 합계</td><td class="s"><span class="chip ch-ktc">ktc-support</span><span class="chip ch-fyi">FYI</span></td><td>채널 표의 지원자를 전부 더한 것과 같은 숫자</td></tr>
+        </table>
+      </div>
+
+      <div class="sect">
+        <h3>헷갈리기 쉬운 말</h3>
+        <table>
+          <tr><th>용어</th><th></th><th>의미</th></tr>
+          <tr><td class="m">지원 건 vs 지원자</td><td class="s"></td><td>지원 건 = 지원서 수 (한 명이 3곳 지원 = 3건) · 지원자 = 사람 수 (3곳 지원해도 1명)</td></tr>
+          <tr><td class="m">입사 vs 충원</td><td class="s"></td><td>입사 = 지금까지 입사한 사람 수 (줄지 않음) · 충원 = 지금 채워져 있는 자리 수 (이탈하면 줄어듦)</td></tr>
+          <tr><td class="m">기간 필터</td><td class="s"></td><td>그 기간에 지원한 사람들만 걸러 보는 것 — 매출·비용·인재풀은 항상 누적</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="boxes">
+    <div class="box">
+      <h4>고치면 언제 반영되나</h4>
+      <ul>
+        <li>시트나 시스템에서 고치면 화면은 <b>늦어도 1분 안에</b> 자동 반영</li>
+        <li>화면 위 <b>새로고침 버튼</b>을 누르면 바로 반영 (1분에 한 번만 가능)</li>
+        <li>시스템 사이의 자동 복사가 3일 이상 밀리면 화면 위에 경고 배너가 뜸</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>집계 원칙</h4>
+      <ul>
+        <li>시트가 원본인 숫자는 <b>시트에서 바로</b> 읽는다 — 복사본을 거치지 않음</li>
+        <li>채용 단계(합격~입사)는 <b>ktc-support 기록이 기준</b></li>
+        <li>TO·충원은 <b>Ops 시트 Matching Status가 기준</b> · 입사는 우리 채용 과정을 거친 사람만</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h4>숫자가 이상해 보일 때</h4>
+      <ul>
+        <li>먼저 <b>ⓘ 표시</b>로 출처를 확인하고 원본 시트를 열어 대조</li>
+        <li>화면과 원본은 <b>자동 검증</b>이 33개 항목을 상시 대조하고 있음</li>
+        <li>그래도 이상하면 슬랙으로 제보 — 지원 미달·시트 오류 알림도 매일 아침 슬랙으로 옴</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div>시트 문서 주소는 이 문서에 싣지 않음 — 대시보드 ⓘ 표시의 링크를 쓰거나 운영팀에 문의.</div>
+    <div class="r">Staffing Master · 데이터 관계도 2/2</div>
+  </div>
+</section>
+
+<script>
+  // 검증 스크린샷용: #p1 / #p2 해시로 한 페이지만 표시
+  const h = location.hash.replace('#', '');
+  if (h === 'p1' || h === 'p2') {
+    document.querySelectorAll('.page').forEach(p => { if (p.id !== h) p.style.display = 'none'; });
+    document.querySelector('.page[id="' + h + '"]').style.margin = '0';
+  }
+
+  // 관계도 연결선 — 원본 노드에서 화면의 각 지표 줄로 직접 잇는다.
+  // 노드 실제 위치를 재서 곡선을 그리므로 내용이 바뀌어도 선이 항상 정확히 붙는다.
+  function drawWires() {
+    const dia = document.getElementById('diagram');
+    const svg = document.getElementById('wires');
+    if (!dia || !svg || dia.offsetParent === null) return;
+    const R = dia.getBoundingClientRect();
+    svg.setAttribute('width', R.width); svg.setAttribute('height', R.height);
+    svg.setAttribute('viewBox', '0 0 ' + R.width + ' ' + R.height);
+
+    // [원본 노드, 화면 줄, 색, 점선 여부]
+    const COLORS = { master: '#3182f6', ops: '#099268', cand: '#e8590c', cost: '#0891b2', ktc: '#7048e8', fyi: '#d6336c', fx: '#6b7280' };
+    const EDGES = [
+      ['n-master', 'r-k-jd', COLORS.master],
+      ['n-ops', 'r-k-to', COLORS.ops],
+      ['n-ops', 'r-k-co', COLORS.ops],
+      ['n-cand', 'r-k-apps', COLORS.cand],
+      ['n-cand', 'r-t-ch', COLORS.cand],
+      ['n-cost', 'r-t-spend', COLORS.cost],
+      ['n-ktc', 'r-k-pipe', COLORS.ktc],
+      ['n-ktc', 'r-t-ppl', COLORS.ktc],
+      ['n-fyi', 'r-k-apps', COLORS.fyi],
+      ['n-fyi', 'r-t-ch', COLORS.fyi],
+      ['n-fyi', 'r-t-pool', COLORS.fyi],
+      ['n-fx', 'r-t-spend', COLORS.fx, true],
+    ];
+
+    // 출구(원본 오른쪽 변)와 입구(줄 왼쪽 변)를 각각 세서 겹치지 않게 벌린다
+    const outCnt = {}, inCnt = {};
+    EDGES.forEach(e => { outCnt[e[0]] = (outCnt[e[0]] || 0) + 1; inCnt[e[1]] = (inCnt[e[1]] || 0) + 1; });
+    const outSeen = {}, inSeen = {};
+
+    const parts = [];
+    EDGES.forEach(e => {
+      const [srcId, rowId, color, dashed] = e;
+      const a = document.getElementById(srcId).getBoundingClientRect();
+      const b = document.getElementById(rowId).getBoundingClientRect();
+      const oi = (outSeen[srcId] = (outSeen[srcId] || 0) + 1);
+      const ii = (inSeen[rowId] = (inSeen[rowId] || 0) + 1);
+      const x1 = a.right - R.left;
+      const y1 = a.top - R.top + a.height * oi / (outCnt[srcId] + 1);
+      const x2 = b.left - R.left - 1;
+      const y2 = b.top - R.top + b.height / 2 + (ii - (inCnt[rowId] + 1) / 2) * 6;
+      const dx = Math.max(40, (x2 - x1) * .45);
+      parts.push('<path d="M' + x1 + ' ' + y1 + ' C' + (x1 + dx) + ' ' + y1 + ' ' + (x2 - dx) + ' ' + y2 + ' ' + x2 + ' ' + y2 + '" fill="none" stroke="' + color + '" stroke-width="1.7" stroke-opacity=".75"' + (dashed ? ' stroke-dasharray="4 3"' : '') + '/>');
+      parts.push('<circle cx="' + (x1 + 1) + '" cy="' + y1 + '" r="2.5" fill="' + color + '"/>');
+      parts.push('<path d="M' + (x2 - 6) + ' ' + (y2 - 3.4) + ' L' + (x2 + 1) + ' ' + y2 + ' L' + (x2 - 6) + ' ' + (y2 + 3.4) + ' Z" fill="' + color + '"/>');
+    });
+    svg.innerHTML = parts.join('');
+  }
+  window.addEventListener('load', () => requestAnimationFrame(drawWires));
+  drawWires();
+</script>
+</body>
+</html>
