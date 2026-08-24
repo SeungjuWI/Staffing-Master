@@ -404,16 +404,19 @@ async function fetchRaw(): Promise<Raw> {
     const findTab = (kw: string) => tabs.find((t: string) => t.toLowerCase().includes(kw.toLowerCase()))
     const cmpTab = findTab('통합 비교표'), metaTab = findTab('캠페인별'), invTab = findTab('invoice')
     if (!cmpTab || !metaTab || !invTab) throw new Error(`탭 탐지 실패 (비교표:${cmpTab} 캠페인:${metaTab} 인보이스:${invTab})`)
-    const liTab = tabs.find((t: string) => t.toUpperCase().includes('LINKEDIN'))
+    // LINKEDIN 탭은 두 세대가 공존한다 — 구탭(LINKEDIN-Alice, ~7/21 인보이스식)과
+    // 신탭(Daily Linkedin - Len, 8/11~ 일별 누적 원장). 첫 매칭만 읽으면 신탭 지출이
+    // 통째로 빠진다 (실사례: 8월 LinkedIn 지출이 대시보드에서 0으로 떠 있었음, 2026-08-24).
+    const liTabs = tabs.filter((t: string) => t.toUpperCase().includes('LINKEDIN'))
     const sumTab = findTab('campaign-summary') // 12. meta-campaign-summary — 캠페인 분류 원장
     const rawTab = findTab('raw-data')          // 11. meta-raw-data — 광고비 일자 원장 (Date × Campaign × Spend)
     const ranges = [`'${cmpTab}'!A1:M15`, `'${metaTab}'!A1:H60`, `'${invTab}'!A1:S60`]
-    const liIdx = liTab ? ranges.push(`'${liTab}'!A1:N120`) - 1 : -1
+    const liIdx = liTabs.length ? ranges.push(...liTabs.map((t: string) => `'${t}'!A1:CZ160`)) - liTabs.length : -1
     const sumIdx = sumTab ? ranges.push(`'${sumTab}'!A1:M60`) - 1 : -1
     const rawIdx = rawTab ? ranges.push(`'${rawTab}'!A1:N9000`) - 1 : -1
     const got = await batchGet(COST_SHEET_ID, ranges)
     const [cmpRows, metaRows, invRows] = got
-    const liRows = liIdx >= 0 ? got[liIdx] : []
+    const liRowsList: any[][][] = liIdx >= 0 ? liTabs.map((_t: string, k: number) => got[liIdx + k] || []) : []
     const sumRows = sumIdx >= 0 ? got[sumIdx] : []
     const adRawRows = rawIdx >= 0 ? got[rawIdx] : []
 
@@ -487,36 +490,79 @@ async function fetchRaw(): Promise<Raw> {
         }
       }
     }
-    // LinkedIn: KTC 공고코드 슬롯만 (자사 채용 슬롯 제외).
-    // 일자는 슬롯 게재 시작일(Start Date) — 종량형이라 실제로 돈이 나가기 시작한 날이다.
-    // 인보이스 일자가 아니라 이쪽을 쓰는 이유: 총액도 이 탭(KTC 슬롯만)이 정본이라 짝을 맞춘다.
-    if (liRows && liRows.length) {
-      const liH = liRows.findIndex((r: any[]) => r.includes('Job code') && r.some(c => String(c || '').startsWith('Cost')))
-      if (liH >= 0) {
-        const LH = liRows[liH]
+    // LinkedIn: KTC 공고코드 슬롯만 (자사 채용 슬롯 제외). 탭이 두 세대라 둘 다 합산한다 —
+    // 구탭(~7/21): 슬롯 1행 = Cost 열 총액, 일자는 게재 시작일(Start Date, 종량형이라 돈이 나가기 시작한 날).
+    // 신탭(8/11~): 날짜 열마다 누적(Acc. Spend)이 쌓이고 슬롯 종료 시 0으로 리셋 —
+    //   행 총액 = 최대 누적값, 일자 분해 = 누적 증가분. 탭 개설 전에 시작한 슬롯은 첫 관측일에
+    //   그때까지 누적이 통으로 잡힌다 (시작일 열이 없어 불가피).
+    // 포맷 판별은 탭 이름이 아니라 헤더 모양으로 한다 (탭명이 수시로 바뀜).
+    // 인보이스 일자가 아니라 이쪽을 쓰는 이유: 총액도 이 탭들(KTC 슬롯만)이 정본이라 짝을 맞춘다.
+    let liVnd = 0
+    const liCodes = new Set<string>()
+    const liDays: Record<string, number> = {}
+    for (const liRows of liRowsList) {
+      if (!liRows || !liRows.length) continue
+      const legacyH = liRows.findIndex((r: any[]) => r.includes('Job code') && r.some(c => String(c || '').startsWith('Cost')))
+      if (legacyH >= 0) {
+        const LH = liRows[legacyH]
         const costCol = LH.findIndex((c: any) => String(c || '').startsWith('Cost'))
         const codeCol = LH.indexOf('Job code')
         const startCol = LH.indexOf('Start Date')
-        let ktcVnd = 0
-        const liCodes = new Set<string>()
-        const liDays: Record<string, number> = {}
-        for (const r of liRows.slice(liH + 1)) {
+        for (const r of liRows.slice(legacyH + 1)) {
           const code = (String(r[codeCol] || '').trim().match(/^[A-Z]{2,6}\d{3,4}/) || [])[0]
           if (!code) continue
           const c = parseKrw(r[costCol])
           if (c != null) {
-            ktcVnd += c
+            liVnd += c
             liCodes.add(code)
             const day = startCol >= 0 ? String(r[startCol] || '').trim() : ''
             if (/^\d{4}-\d{2}-\d{2}$/.test(day)) liDays[day] = (liDays[day] || 0) + c * vndToKrw
           }
         }
-        if (ktcVnd > 0) {
-          spendByChannel.LinkedIn = ktcVnd * vndToKrw
-          feeDays.LinkedIn = liDays // 인보이스 일자 분해는 버린다 (총액 정본이 이 탭이므로)
-          if (postedByChannel.LinkedIn == null) postedByChannel.LinkedIn = liCodes.size
+        continue
+      }
+      // 신탭 (일별 누적 원장)
+      const dailyH = liRows.findIndex((r: any[]) =>
+        r.some(c => /^job code$/i.test(String(c || '').trim())) && r.some(c => /daily cost/i.test(String(c || ''))))
+      if (dailyH < 0) continue
+      const DH = liRows[dailyH]
+      const codeCol = DH.findIndex((c: any) => /^job code$/i.test(String(c || '').trim()))
+      const startCol = DH.findIndex((c: any) => /^start day$/i.test(String(c || '').trim()))
+      // 날짜 헤더는 dd/mm 뿐이라 연도는 Start Day(dd/mm/yyyy)에서 따온다
+      let year = ''
+      for (const r of liRows.slice(dailyH + 1)) {
+        const m = String(r[startCol] || '').trim().match(/^\d{2}\/\d{2}\/(\d{4})$/)
+        if (m) { year = m[1]; break }
+      }
+      const dateCols: { col: number; day: string }[] = []
+      DH.forEach((c: any, i: number) => {
+        const m = String(c || '').trim().match(/^(\d{2})\/(\d{2})$/)
+        if (m && year) dateCols.push({ col: i, day: `${year}-${m[2]}-${m[1]}` })
+      })
+      // dailyH+2: 날짜 행 바로 아래의 서브헤더 행(Acc. Spend / CV total)을 건너뛴다
+      for (const r of liRows.slice(dailyH + 2)) {
+        const code = (String(r[codeCol] || '').trim().match(/^[A-Z]{2,6}\d{3,4}/) || [])[0]
+        if (!code) continue
+        let prev = 0, total = 0
+        for (const { col, day } of dateCols) {
+          const acc = parseKrw(r[col])
+          if (acc == null || acc <= 0) continue // 빈칸·종료 리셋(0) — 누적은 감소하지 않으니 건너뜀
+          if (acc > total) total = acc
+          if (acc > prev) {
+            liDays[day] = (liDays[day] || 0) + (acc - prev) * vndToKrw
+            prev = acc
+          }
+        }
+        if (total > 0) {
+          liVnd += total
+          liCodes.add(code)
         }
       }
+    }
+    if (liVnd > 0) {
+      spendByChannel.LinkedIn = liVnd * vndToKrw
+      feeDays.LinkedIn = liDays // 인보이스 일자 분해는 버린다 (총액 정본이 이 탭들이므로)
+      if (postedByChannel.LinkedIn == null) postedByChannel.LinkedIn = liCodes.size
     }
     // Meta 광고비 분해 (2. 캠페인별 Meta 광고 성과 탭) — 채널 배분은 이름 접두: FYI_* = FYI, 그 외 = 랜딩.
     // FYI_* 캠페인은 KTC 모집 목적 여부 무관 전액 합산 (2026-07-30 대표 지시 "FYI로 쳐진 거 다 넣어") —
@@ -1255,7 +1301,7 @@ const getCachedByPeriod = unstable_cache(
   },
   // v15·v21·v22 는 별도 세션(점검 탭 / feat/audit-check-tab 브랜치)이 선점해 건너뜀 —
   // Data Cache 는 배포로 안 비워지므로 같은 키를 쓰면 MasterData 모양이 다른 옛 스냅숏이 되돌아온다
-  ['staffing-master-data-v24'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v25'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

@@ -124,6 +124,7 @@ const SRC_DEFS = {
       { k: 'sheet', sys: 'src.sys.costInvoice', loc: 'src.ch.spend.loc1', sheet: 'cost', tab: 'invoice' },
       { k: 'sheet', sys: 'src.sys.costCompare', loc: 'src.ch.spend.loc2', sheet: 'cost', tab: '통합 비교표' },
       { k: 'sheet', sys: 'src.sys.costLinkedin', loc: 'src.ch.spend.loc3', sheet: 'cost', tab: 'LINKEDIN' },
+      { k: 'sheet', sys: 'src.sys.costLinkedinDaily', loc: 'src.ch.spend.loc3b', sheet: 'cost', tab: 'Daily Linkedin' },
       { k: 'sheet', sys: 'src.sys.costMetaCamp', loc: 'src.ch.spend.loc4', sheet: 'cost', tab: '캠페인별' },
       { k: 'sheet', sys: 'src.sys.costMetaSummary', loc: 'src.ch.spend.loc5', sheet: 'cost', tab: 'campaign-summary' },
       { k: 'sheet', sys: 'src.sys.costMetaRaw', loc: 'src.ch.spend.loc6', sheet: 'cost', tab: 'raw-data' },
