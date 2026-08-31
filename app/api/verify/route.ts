@@ -150,7 +150,7 @@ export async function GET() {
         for (const r of toRows.slice(hIdx + 1)) {
           // 합계·테스트 행과 공고코드 없는 VN 트랙 행 배제 (소문자 코드도 있어 대문자로 맞춘다)
           const c = String((r || [])[cCode] || '').trim().toUpperCase()
-          if (!/^[A-Z]{2,6}\d{3,4}$/.test(c)) continue
+          if (!/^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/.test(c)) continue
           const b = toTableByCode[c] || (toTableByCode[c] = { to: 0, filled: 0 })
           b.to += toNum(r[cTo])
           b.filled += toNum(r[cMatch])
@@ -192,7 +192,7 @@ export async function GET() {
     for (const r of ivRows.slice(2)) {
       const name = String(r[1] || '').trim()
       if (!name) continue
-      if (!/[A-Z]{2,6}\d{3,4}/.test(String(r[13] || ''))) ivNoCodeRows++ // 공고코드 없는 면접 행 = 공고별 면접 누락 풀
+      if (!/(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})/.test(String(r[13] || ''))) ivNoCodeRows++ // 공고코드 없는 면접 행 = 공고별 면접 누락 풀
       const key = String(r[2] || '').trim().toLowerCase() || name
       if (!seen.has(key)) { seen.add(key); ivPeople++ }
     }
@@ -203,7 +203,7 @@ export async function GET() {
     const norm = (s: any) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim()
     const fpNamesNorm = new Set(fp.map(c => norm(c.full_name)).filter(Boolean))
     for (const c of fp) {
-      const m = String(c.applied_job || '').trim().match(/^([A-Z]{2,6}\d{3,4})/)
+      const m = String(c.applied_job || '').trim().match(/^((?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4}))/)
       if (m) fpByCode[m[1].toUpperCase()] = (fpByCode[m[1].toUpperCase()] || 0) + 1
     }
     const hIdx = empRows.findIndex((r: any[]) => r.includes('Name') && r.some((c: any) => /e-?mail/i.test(c || '')))
@@ -288,7 +288,7 @@ export async function GET() {
         const nCol = H.findIndex(h => /name|họ|tên/i.test(h))
         const cCol = H.findIndex(h => /job\s*id/i.test(h))
         const jCol = H.findIndex(h => /applied\s*job|job\s*title|^job$|vị trí/i.test(h))
-        const codeOf = (s: string) => (s.trim().match(/^([A-Z]{2,6}\d{3,4})/) || [])[1] || null
+        const codeOf = (s: string) => (s.trim().match(/^((?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4}))/) || [])[1] || null
         let apps = 0
         const emails = new Set<string>()
         for (const r of rows.slice(hIdx + 1)) {
@@ -339,7 +339,7 @@ export async function GET() {
   const fyiCode = (job: { title: string; company: string; sourceId: string }): string | null => {
     const jc = alnT(job.company)
     const compMatch = (c: string) => c === jc || (c.length >= 4 && jc.length >= 4 && (c.includes(jc) || jc.includes(c)))
-    const fromId = (job.sourceId.match(/^([A-Z]{2,6}\d{3,4})/) || [])[1]
+    const fromId = (job.sourceId.match(/^((?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4}))/) || [])[1]
     if (fromId) return fromId
     const exact = jdTitleToCode[normT(job.title)]
     if (exact) {

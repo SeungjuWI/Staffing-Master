@@ -29,7 +29,7 @@ const KTC_OPS_SHEET_ID = process.env.KTC_OPS_SHEET_ID || '1opr9KoR7KRZ31CJDNGM63
 // 지원자 원본 시트 (채널별 탭) — 지원 건은 여기가 진실의 원천
 const CANDIDATE_SHEET_ID = process.env.CANDIDATE_DATA_SHEET_ID || '13pvv1vQ8PklkIjOfuILD5sbKZJu0CRkiaXRXxUTOp88'
 
-const CODE_RE = /[A-Z]{2,6}\d{3,4}/g
+const CODE_RE = /(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})/g
 
 // 스크리닝 합격 "도달" (현행 + 구 상태값)
 const SCREEN_PASS = new Set([
@@ -65,7 +65,7 @@ const toDate = (s: unknown) => (/^\d{4}-\d{2}-\d{2}$/.test(String(s || '').trim(
 const normName = (s: unknown) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim()
 
 function extractJobCode(appliedJob: unknown) {
-  const m = String(appliedJob || '').trim().match(/^([A-Z]{2,6}\d{3,4})/)
+  const m = String(appliedJob || '').trim().match(/^((?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4}))/)
   return m ? m[1] : null
 }
 
@@ -509,7 +509,7 @@ async function fetchRaw(): Promise<Raw> {
         const codeCol = LH.indexOf('Job code')
         const startCol = LH.indexOf('Start Date')
         for (const r of liRows.slice(legacyH + 1)) {
-          const code = (String(r[codeCol] || '').trim().match(/^[A-Z]{2,6}\d{3,4}/) || [])[0]
+          const code = (String(r[codeCol] || '').trim().match(/^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})/) || [])[0]
           if (!code) continue
           const c = parseKrw(r[costCol])
           if (c != null) {
@@ -541,7 +541,7 @@ async function fetchRaw(): Promise<Raw> {
       })
       // dailyH+2: 날짜 행 바로 아래의 서브헤더 행(Acc. Spend / CV total)을 건너뛴다
       for (const r of liRows.slice(dailyH + 2)) {
-        const code = (String(r[codeCol] || '').trim().match(/^[A-Z]{2,6}\d{3,4}/) || [])[0]
+        const code = (String(r[codeCol] || '').trim().match(/^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})/) || [])[0]
         if (!code) continue
         let prev = 0, total = 0
         for (const { col, day } of dateCols) {
@@ -879,7 +879,9 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   //    회사의 동명 공고가 남의 코드에 붙던 실사례 방지) → 회사 매칭 후 제목 유사
   //    (괄호·" - " 접미 제거 정확/포함 → 앞 3단어). FYI 표기가 원장의 변형인 실사례가 많다
   //    (FPT Software Korea vs Fptsoftware, "TikTok Ads Marketing Specialist" vs "... Manager").
-  const aln = (s: unknown) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  // 성조 분리(NFD) 후 제거 + đ→d — 안 하면 "VIỆT NAM"(→vitnam) vs "VIETNAM"이 다른 회사로 갈려
+  // 제목 정확 일치까지 기각된다 (실사례: V23 EXPORUM 지원 37건이 통째로 미귀속, 2026-08-31)
+  const aln = (s: unknown) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/đ/g, 'd').replace(/[^a-z0-9]/g, '')
   const simp = (s: unknown) => normName(String(s || '').replace(/\([^)]*\)/g, ' ').split(' - ')[0])
   const jdIndex: { code: string; comp: string; title: string }[] = []
   for (const r of jdDataRows) {
@@ -896,7 +898,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       const jc = aln(job.company)
       const compMatch = (c: string) =>
         c === jc || (c.length >= 4 && jc.length >= 4 && (c.includes(jc) || jc.includes(c)))
-      code = (job.sourceId.match(/^([A-Z]{2,6}\d{3,4})/) || [])[1] || null
+      code = (job.sourceId.match(/^((?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4}))/) || [])[1] || null
       if (!code) {
         const exact = titleToCode[normName(job.title)]
         if (exact) {
@@ -1081,7 +1083,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         // 공고코드 형태만 인정 — 이 탭에는 합계 행, 테스트 행, 그리고 공고코드가 없는
         // VN 트랙 행(Kocham·LIKELION VN 등)이 섞여 있다. 소문자 코드(smg3101)도 있어 대문자로 맞춘다.
         const code = String((r || [])[cCode] || '').trim().toUpperCase()
-        if (!/^[A-Z]{2,6}\d{3,4}$/.test(code)) continue
+        if (!/^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/.test(code)) continue
         const b = toByCode[code] || (toByCode[code] = { to: 0, filled: 0, dropped: 0, responded: false })
         // 재게시 등으로 같은 코드가 여러 행일 수 있어 합산
         b.to += toNum(r[cTo])
