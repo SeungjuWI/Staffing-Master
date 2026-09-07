@@ -20,7 +20,7 @@
 import { unstable_cache } from 'next/cache'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import type { Channel, CompanyPerf, DayPoint, FunnelStage, JdRow, MasterData, MonthPoint, VietnamBlock } from './types'
-import { ACTION_DAY, prevDay } from './fmt'
+import { ACTION_DAY, jdSector, normalizeYoe, prevDay } from './fmt'
 import { mockData } from './mock'
 
 const MASTER_SHEET_ID = process.env.MASTER_SHEET_ID || '1mR1_-a3LmjxAbbox3tTKBu6WYwDbfBYKmPB6TP9EnKI'
@@ -713,6 +713,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     code: jdCol(/job\s*id/i, 0),
     company: jdCol(/company/i, 1),
     title: jdCol(/job\s*title/i, 2),
+    yoe: jdCol(/yoe|experience/i, 5),
     headcount: jdCol(/headcount/i, 6),
     received: jdCol(/date\s*received/i, 7),
     status: jdCol(/job\s*status/i, 9),
@@ -1145,10 +1146,15 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         else health = 'stall' // curCompany>0 이면 기업 응답 없음, 0이면 내부 처리 정체 — 사유는 UI에서 분기
       }
 
+      const title = String(r[JC.title] || '').trim()
+      const yoeRaw = String(r[JC.yoe] || '').trim()
       return {
         code,
         company: String(r[JC.company] || '').trim(),
-        title: String(r[JC.title] || '').trim(),
+        title,
+        sector: jdSector(title),
+        yoe: normalizeYoe(yoeRaw),
+        yoeRaw,
         headcount,
         status,
         open,
@@ -1303,7 +1309,7 @@ const getCachedByPeriod = unstable_cache(
   },
   // v15·v21·v22 는 별도 세션(점검 탭 / feat/audit-check-tab 브랜치)이 선점해 건너뜀 —
   // Data Cache 는 배포로 안 비워지므로 같은 키를 쓰면 MasterData 모양이 다른 옛 스냅숏이 되돌아온다
-  ['staffing-master-data-v25'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기
+  ['staffing-master-data-v26'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기 (v26: 공고 직군·연차)
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

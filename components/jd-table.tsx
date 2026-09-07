@@ -10,6 +10,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { JdRow } from '@/lib/types'
+import { yoeRank } from '@/lib/fmt'
 import type { I18n } from '@/lib/i18n'
 import { rich } from '@/lib/i18n-rich'
 import { EmptyState, Meter } from './viz'
@@ -86,6 +87,43 @@ function Donut({ i, parts, total }: { i: I18n; parts: DonutPart[]; total: number
   )
 }
 
+// ── 직군·연차 칩 (2026-09-07 대표 요청: "공고마다 몇년차·IT/non-IT 인지 안 보인다") ──────
+// 연차는 aggregate 가 정리한 표준 토큰(normalizeYoe)을 로케일 표기로 푼다. 'raw:' 는 해석 불가 원문.
+const YOE_WORD: Record<string, string> = {
+  intern: 'yoe.intern', fresher: 'yoe.fresher', 'intern-fresher': 'yoe.internFresher',
+  any: 'yoe.any', manager: 'yoe.manager',
+}
+function yoeText(i: I18n, yoe: string | null | undefined): string | null {
+  if (!yoe) return null
+  if (yoe.startsWith('raw:')) return yoe.slice(4)
+  let m = yoe.match(/^(\d+)-(\d+)$/)
+  if (m) return i.t('yoe.range', { a: m[1], b: m[2] })
+  m = yoe.match(/^(\d+)\+$/)
+  if (m) return i.t('yoe.min', { n: m[1] })
+  if (/^\d+$/.test(yoe)) return i.t('yoe.exact', { n: yoe })
+  return YOE_WORD[yoe] ? i.t(YOE_WORD[yoe]) : yoe
+}
+
+// 직군+연차 칩 묶음 — 표의 요건 열(미기재는 '–')과 행 클릭 상세(미기재를 말로 풀어줌)가 공유.
+// sector 가 없는 옛 캐시 스냅숏(60초 창)에서는 아무것도 그리지 않는다.
+function ReqChips({ i, j, detail }: { i: I18n; j: JdRow; detail?: boolean }) {
+  const yoe = yoeText(i, j.yoe)
+  return (
+    <>
+      {j.sector && (
+        <span className={`ck ${j.sector === 'it' ? 'it' : 'nonit'}`} title={i.t('title.sector')}>
+          {i.t(j.sector === 'it' ? 'req.it' : 'req.nonit')}
+        </span>
+      )}
+      {yoe ? (
+        <span className="ck yoe" title={j.yoeRaw ? i.t('title.yoeRaw', { raw: j.yoeRaw }) : undefined}>{yoe}</span>
+      ) : (
+        j.sector && <span className="dim" title={detail ? undefined : i.t('yoe.none')}>{detail ? i.t('yoe.none') : '–'}</span>
+      )}
+    </>
+  )
+}
+
 // 충원 완료 사유 — TO 대비 몇 명 채웠는지 (초과 채용이면 초과분도 말해준다)
 function doneReason(i: I18n, j: JdRow): string {
   const to = j.headcount ?? 0
@@ -133,6 +171,8 @@ function JdDetail({ i, j, open, colSpan }: { i: I18n; j: JdRow; open: boolean; c
             </div>
           )}
           <dl className="jdx-facts">
+            <dt>{i.t('jdx.req')}</dt>
+            <dd><ReqChips i={i} j={j} detail /></dd>
             <dt>{i.t('jdx.start')}</dt>
             <dd>{j.startDate ? <>{i.fmtDay(j.startDate)}{j.days != null && <> · <b>D+{i.fmtInt(j.days)}</b></>}</> : i.t('jdx.noStart')}</dd>
             <dt>{i.t('jdx.lastApp')}</dt>
@@ -186,7 +226,7 @@ function healthNote(i: I18n, j: JdRow): string {
   return ''
 }
 
-type SortKey = 'company' | 'received' | 'to' | 'apps' | 'docPass' | 'delivered' | 'interviews' | 'hires' | 'fill'
+type SortKey = 'company' | 'req' | 'received' | 'to' | 'apps' | 'docPass' | 'delivered' | 'interviews' | 'hires' | 'fill'
 type Sort = { key: SortKey; dir: 1 | -1 }
 
 // 주차 구분선 (2026-07-29 회의: "주마다 구분선 — D+7, D+14") — 모집 시작순 정렬일 때만 그린다.
@@ -205,6 +245,8 @@ const DEFAULT_SORT: Sort = { key: 'received', dir: -1 }
 const sortVal = (j: JdRow, key: SortKey): string | number | null => {
   switch (key) {
     case 'company': return j.company || null
+    // 직군·연차 열은 IT 먼저 묶고 그 안에서 연차 낮은순 — 오름차순 클릭 한 번으로 IT/non-IT 가 갈린다
+    case 'req': return (j.sector === 'nonit' ? 1000 : 0) + yoeRank(j.yoe ?? null)
     case 'received': return j.startDate
     case 'to': return j.headcount
     case 'apps': return j.apps
@@ -250,7 +292,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
   // 행 클릭 상세 (아코디언 — 한 번에 하나만)
   const [xCode, setXCode] = useState<string | null>(null)
   const onSort = (key: SortKey) => {
-    const firstDir: 1 | -1 = key === 'company' ? 1 : -1
+    const firstDir: 1 | -1 = key === 'company' || key === 'req' ? 1 : -1
     setSort(s =>
       s.key !== key ? { key, dir: firstDir } : s.dir === firstDir ? { key, dir: (-firstDir as 1 | -1) } : DEFAULT_SORT
     )
@@ -334,6 +376,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
               <tr>
                 {open && <th className="selcell" aria-label={i.t('sel.colAria')} />}
                 <SortTh i={i} label={i.t('th.jd')} k="company" sort={sort} onSort={onSort} src="jd.jd" srcLeft />
+                <SortTh i={i} label={i.t('th.req')} k="req" sort={sort} onSort={onSort} src="jd.req" srcLeft />
                 <SortTh i={i} label={i.t('th.received')} k="received" sort={sort} onSort={onSort} src="jd.received" srcLeft />
                 {!open && <th>{i.t('th.status')}<SrcTip k="jd.status" /></th>}
                 <SortTh i={i} label={i.t('th.to')} k="to" sort={sort} onSort={onSort} src="jd.to" />
@@ -358,7 +401,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                   <Fragment key={j.code}>
                   {wkName && (
                     <tr className="wkrow">
-                      <td colSpan={10}>
+                      <td colSpan={11}>
                         {wkName}
                         {wkRange && <span className="dim"> · {wkRange}</span>}
                       </td>
@@ -394,6 +437,9 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                           <b>{i.t(HEALTH_META[j.health].label)}</b> — {note}
                         </span>
                       )}
+                    </td>
+                    <td className="reqcell">
+                      <ReqChips i={i} j={j} />
                     </td>
                     <td title={j.startDate ? i.t('title.received') : undefined}>
                       {j.startDate ? (
@@ -445,7 +491,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                       />
                     </td>
                   </tr>
-                  {expanded && <JdDetail i={i} j={j} open={open} colSpan={10} />}
+                  {expanded && <JdDetail i={i} j={j} open={open} colSpan={11} />}
                   </Fragment>
                 )
               })}

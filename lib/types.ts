@@ -27,6 +27,9 @@ export type JdRow = {
   code: string           // 공고코드 (FPT401 등)
   company: string
   title: string
+  sector: 'it' | 'nonit' // 직군 — 시트에 구분 열이 없어 Job Title 키워드로 판정 (lib/fmt.ts jdSector)
+  yoe: string | null     // 요구 연차 표준 토큰 (YOE Required 원문 정리 — lib/fmt.ts normalizeYoe)
+  yoeRaw: string         // └ 시트 원문 (툴팁으로 노출 — 정리 표기가 의심될 때 대조용)
   headcount: number | null // 채용 목표 인원 (TO) — KTC Ops Matching Status 'Total TO', 없으면 JD EXECUTION Headcount
   status: string         // JD EXECUTION 시트 status 원문
   open: boolean          // 진행 중 여부

@@ -402,6 +402,12 @@ tbody tr.wkrow:hover { background: transparent; }
 .ck.free { border: 1px solid var(--border); color: var(--muted); }
 /* 지금은 안 쓰는 유입 경로 — 무료(실선)와 구분되게 점선 */
 .ck.past { border: 1px dashed var(--border); color: var(--muted); }
+/* 공고 직군·연차 칩 (jd-table 직군·연차 열 + 행 클릭 상세) — IT 는 틴트로 튀게, non-IT 는 외곽선만 */
+.reqcell { white-space: nowrap; }
+.reqcell .ck, .jdx-facts .ck { margin-left: 0; margin-right: 5px; }
+.ck.it { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-text); }
+.ck.nonit { border: 1px solid var(--border); color: var(--muted); }
+.ck.yoe { background: var(--grid); color: var(--ink-2); font-variant-numeric: tabular-nums; cursor: help; }
 @media (prefers-color-scheme: dark) {
   .ck.own { color: #ffa066; }
 }

@@ -52,6 +52,13 @@ const SRC_DEFS = {
     lines: [{ k: 'sheet', sys: 'src.sys.masterJd', loc: 'src.jd.jd.loc', sheet: 'master', tab: 'JD EXECUTION' }],
     note: 'src.jd.jd.note',
   },
+  'jd.req': {
+    lines: [
+      { k: 'sheet', sys: 'src.sys.masterJd', loc: 'src.jd.req.loc', sheet: 'master', tab: 'JD EXECUTION' },
+      { k: 'calc', sys: 'src.jd.req.calc', loc: 'src.jd.req.calcLoc' },
+    ],
+    note: 'src.jd.req.note',
+  },
   'jd.received': {
     lines: [
       { k: 'sheet', sys: 'src.sys.masterJd', loc: 'src.jd.received.loc', sheet: 'master', tab: 'JD EXECUTION' },
