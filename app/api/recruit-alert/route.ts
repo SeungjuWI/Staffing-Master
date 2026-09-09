@@ -1,10 +1,11 @@
 // 지원 미달·발송 지연 알림 — Vercel Cron 이 매일 09:00 KST(= 베트남 07:00)에 호출.
-// 하루 1회 stateless 다이제스트. 공고를 단계별로 분류:
-//   📤 발송 지연  — 스크리닝 합격자가 5명+ 대기 중인데 기업 발송 기록이 없음 (공이 매칭 스쿼드에 있음).
+// 하루 1회 stateless 다이제스트, 종류별 별도 메시지 2건 (합치지 말 것 — 피드백):
+//   🚨 발송 지연  — 스크리닝 합격자가 5명+ 대기 중인데 기업 발송 기록이 없음 (공이 매칭 스쿼드에 있음).
 //                  기준은 지원 건수가 아니라 "보낼 수 있는 합격자"(현재 passed+ready_to_forward) —
-//                  지원 10건 기준 1차안은 "너무 난잡하다" 피드백으로 교체(09-09). 게이지 없이 한 줄 표기.
-//   🆕/🔴 지원 미달 — D+3 이상인데 지원 < TO×10 (공이 인재/소싱 스쿼드에 있음)
-//   📮 발송 완료  — 지원은 미달이어도 이미 발송된 공고는 독촉 무의미 → 하단 한 줄로만 표기
+//                  지원 10건 기준 1차안은 "너무 난잡하다" 피드백으로 교체(09-09).
+//                  형식은 사용자 지정: 헤더 + `[코드] 회사 - 합격 N명` 한 줄씩, 멘션·게이지·버튼 없음.
+//   🚨 지원 미달  — D+3 이상인데 지원 < TO×10 (공이 인재/소싱 스쿼드에 있음). 기존 3줄 게이지 형식.
+//     └ 📮 발송 완료 — 지원은 미달이어도 이미 발송된 공고는 독촉 무의미 → 미달 메시지 하단 한 줄로만 표기
 // ("발송 지연"은 2026-09-09 ktc-support slack-nudges 에서 이관 — 거기 candidates DB 는 V코드 공고
 //  귀속이 누락돼 판정 재료가 없고, 문턱 없이 게재만 보면 신규 공고까지 70건대 무더기가 됐다.)
 // 발송 신호 2계통(둘 중 하나면 발송으로 본다):
@@ -113,37 +114,49 @@ export async function GET(req: NextRequest) {
   const ongoing = flagged.filter(f => f.days > FROM_DAY).sort(urgent)
   shipDelay.sort((a, b) => b.passed - a.passed) // 대기 합격자 많은 순 — 많이 쌓일수록 시급
 
-  const total = shipDelay.length + fresh.length + ongoing.length + noDate.length
+  const missTotal = fresh.length + ongoing.length + noDate.length
+  const total = shipDelay.length + missTotal
   const divider = { type: 'divider' }
 
   // Block Kit 본문 블록만 사용 — 색 사이드바(attachments)는 내용이 길면 슬랙이 "간략히 보기"로 접어버려서 뺐음
   // <!here> = 슬랙 @here 멘션 문법 (문자 그대로 "@here" 로 쓰면 안 울림). 미달 0건인 날은 발송 자체를 안 하므로 헛울림 없음
   // ?nohere=1 이면 @here 생략 (테스트 발송용 — 채널 사람들 호출 안 함)
   const noHere = req.nextUrl.searchParams.get('nohere') === '1'
-  // 한·베 병기 (보는 사람이 한국+베트남 팀) · '건' 카운터 및 기준 설명 줄 제거 (피드백)
-  const header = `🚨 지원 미달 · 발송 지연 · Thiếu / chưa gửi ứng viên (${total})`
+
+  // 발송 지연 = 별도 메시지 ("독촉 종류별로 별도 메시지" + 09-09 사용자 지정 형식).
+  // 헤더 + `[코드] 회사 - 합격 N명` 한 줄씩만 — 멘션·버튼·게이지 없음 ("태그는 굳이 안 걸어도 됨").
+  // 한국기업/베트남기업 소제목으로 분리 (팀 요청) — V코드(V+숫자)=베트남, 나머지(R·K·구코드)=한국
+  const shipGroups = [
+    { label: '한국기업', items: shipDelay.filter(s => !/^V\d/i.test(s.code)) },
+    { label: '베트남기업', items: shipDelay.filter(s => /^V\d/i.test(s.code)) },
+  ].filter(g => g.items.length)
+  const shipPayload = shipDelay.length
+    ? {
+        text: `🚨 발송 지연 (${shipDelay.length})`, // 푸시 알림 미리보기용 폴백
+        blocks: [
+          { type: 'header', text: { type: 'plain_text', text: `🚨 발송 지연 (${shipDelay.length})` } },
+          ...shipGroups.flatMap(g => [
+            { type: 'section', text: { type: 'mrkdwn', text: `*${g.label} (${g.items.length})*` } },
+            // 15줄씩 묶음 (섹션당 3,000자 제한 대비)
+            ...Array.from({ length: Math.ceil(g.items.length / 15) }, (_, i) => ({
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: g.items.slice(i * 15, i * 15 + 15).map(s => `*[${s.code}] ${s.company}* - 합격 ${s.passed}명`).join('\n'),
+              },
+            })),
+          ]),
+        ],
+      }
+    : null
+
+  // 지원 미달 = 기존 형식 그대로 (한·베 병기 · 3줄 게이지 블록 · @here)
+  const header = `🚨 지원 미달 공고 · Tin thiếu ứng viên (${missTotal})`
   const payload = {
     text: header, // 푸시 알림 미리보기용 폴백
     blocks: [
       ...(noHere ? [] : [{ type: 'section', text: { type: 'mrkdwn', text: '<!here>' } }]),
       { type: 'header', text: { type: 'plain_text', text: header } },
-      // 발송 지연이 맨 위 — 합격자가 이미 대기 중이라 오늘 바로 처리 가능한 액션. 게이지 없이 한 줄씩 (피드백)
-      ...(shipDelay.length
-        ? [
-            divider,
-            { type: 'section', text: { type: 'mrkdwn', text: `📤 *발송 지연 — 합격자 대기 중, 기업 발송 전 · Có ứng viên đậu, chưa gửi (${shipDelay.length})*` } },
-            // 15줄씩 묶음 (섹션당 3,000자 제한 대비)
-            ...Array.from({ length: Math.ceil(shipDelay.length / 15) }, (_, i) => ({
-              type: 'section',
-              text: {
-                type: 'mrkdwn',
-                text: shipDelay.slice(i * 15, i * 15 + 15)
-                  .map(s => `*${s.code}*  ${s.company} · ${s.title.length > 40 ? s.title.slice(0, 39) + '…' : s.title} — *합격 ${s.passed}명*`)
-                  .join('\n'),
-              },
-            })),
-          ]
-        : []),
       ...(fresh.length ? [divider, ...groupBlocks(`🆕 *오늘 D+${FROM_DAY} 도달 · Mới đạt D+${FROM_DAY} hôm nay (${fresh.length})*`, fresh)] : []),
       ...(ongoing.length ? [divider, ...groupBlocks(`🔴 *계속 미달 · Vẫn thiếu ứng viên (${ongoing.length})*`, ongoing)] : []),
       ...(noDate.length
@@ -166,18 +179,24 @@ export async function GET(req: NextRequest) {
 
   const summary = { ok: true, total, shipDelay: shipDelay.length, fresh: fresh.length, ongoing: ongoing.length, noDate: noDate.length, forwarded: forwarded.length }
 
-  if (dry) return NextResponse.json({ ...summary, payload, shipDelayJds: shipDelay, flagged, noDate: noDate.map(j => j.code), forwardedJds: forwarded.map(j => ({ code: j.code, company: j.company, delivered: j.delivered, cvSharedAt: j.cvSharedAt, apps: j.appsAll })) })
+  if (dry) return NextResponse.json({ ...summary, shipPayload, payload, shipDelayJds: shipDelay, flagged, noDate: noDate.map(j => j.code), forwardedJds: forwarded.map(j => ({ code: j.code, company: j.company, delivered: j.delivered, cvSharedAt: j.cvSharedAt, apps: j.appsAll })) })
 
-  if (total === 0) return NextResponse.json({ ...summary, sent: false }) // 지연·미달 0건인 날은 발송 안 함
+  if (total === 0) return NextResponse.json({ ...summary, sent: 0 }) // 지연·미달 0건인 날은 발송 안 함
 
   const webhook = process.env.SLACK_ALERT_WEBHOOK_URL || process.env.SLACK_WEBHOOK_URL
-  if (!webhook) return NextResponse.json({ ...summary, sent: false, error: 'SLACK_ALERT_WEBHOOK_URL 미설정' }, { status: 500 })
+  if (!webhook) return NextResponse.json({ ...summary, sent: 0, error: 'SLACK_ALERT_WEBHOOK_URL 미설정' }, { status: 500 })
 
-  const res = await fetch(webhook, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) return NextResponse.json({ ...summary, sent: false, error: `슬랙 발송 실패: ${res.status}` }, { status: 502 })
-  return NextResponse.json({ ...summary, sent: true })
+  // 발송 지연 → 지원 미달 순으로 각각 별도 메시지. 일부 실패해도 나머지는 계속 보낸다
+  const payloads = [shipPayload, missTotal > 0 ? payload : null].filter(Boolean)
+  const failed: number[] = []
+  for (const p of payloads) {
+    const res = await fetch(webhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(p),
+    })
+    if (!res.ok) failed.push(res.status)
+  }
+  if (failed.length) return NextResponse.json({ ...summary, sent: payloads.length - failed.length, error: `슬랙 발송 실패: ${failed.join(', ')}` }, { status: 502 })
+  return NextResponse.json({ ...summary, sent: payloads.length })
 }
