@@ -45,6 +45,7 @@ export type JdRow = {
   dropped: number        // 이탈한 자리 수 (Matching Status '이탈' 열) — 채웠다가 나갔거나 매칭 전 드롭
   responded: boolean     // 기업 반응 이력 — Matching Status 에 기업 인터뷰 완료·매칭 날짜가 있는 공고 (판정 재료)
   cvSharedAt: string | null // 첫 기업 발송일 (ktc-support funnel_events cv_shared) — 발송기 웹훅 + 수동 기록 포함
+  msSourcing: boolean | null // Matching Status Funnel 판정 — true=진행중·소싱 단계(발송 전) / false=발송 후·드랍·완료 / null=원장 미등재(조인 실패 포함)
   startDate: string | null // 모집 시작일 (시트 Date Received, 없으면 최초 지원일) YYYY-MM-DD
   days: number | null    // 모집 시작 후 경과 일수
   peopleAll: number      // 누적 지원자 (스톡 — 기간 필터 무관)

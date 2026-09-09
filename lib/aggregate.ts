@@ -1065,6 +1065,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // 열은 헤더 이름으로 해석 (이 시트들은 컬럼이 자주 이동한다 — 인덱스 하드코딩 금지).
   // 헤더 셀에 줄바꿈이 섞여 있어(`Total⏎TO`, `VN⏎Code`) 공백으로 정규화해 찾는다.
   const toByCode: Record<string, { to: number; filled: number; dropped: number; responded: boolean }> = {}
+  const msSourcingByCode: Record<string, boolean> = {} // true=진행중·소싱 단계 / false=발송 후·드랍·완료 / 키 없음=원장 미등재
   {
     const norm = (c: any) => String(c || '').replace(/\n/g, ' ').trim()
     const hIdx = toSheet.findIndex((r: any[]) => (r || []).some((c: any) => /vn\s*code/i.test(norm(c))))
@@ -1096,6 +1097,26 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         b.dropped += toNum(r[cDrop])
         // 기업 반응 이력 = 기업 인터뷰 완료일이나 첫 매칭일이 찍힌 공고 (이탈로 끝났어도 반응은 있었던 것)
         if (String(r[cIv] || '').trim() || String(r[cM1] || '').trim()) b.responded = true
+      }
+
+      // ── Funnel 단계 (발송 전/후 판정, 2026-09-09) — recruit-alert 발송 지연이 원장 기준으로 판정 ──
+      // 값: "1. 리드 발생"/"2. 인재 소싱 중"(=발송 전) · "3. 인터뷰 대상 심사"~"6. 매칭"/"Drop"(=발송 후·종료).
+      // 키는 VN Code 열 + Code 열(V·K 코드만) — Code 열의 R 채번은 JD 원장 R 채번과 서로 달라
+      // (실측: MS R105=바다핀테크 vs 원장 R105=Atop) R 코드 조인은 오매칭이라 금지.
+      // 같은 코드 여러 행(재게시)이면: 진행중 + 소싱 단계 행이 하나라도 있으면 '소싱 중'으로 본다.
+      const cFunnel = col(/^funnel$/i, 4)
+      const cMsStat = col(/^상태$/, 0)
+      const cCode2 = col(/^code$/i, 5)
+      for (const r of toSheet.slice(hIdx + 1)) {
+        const vn = String((r || [])[cCode] || '').trim().toUpperCase()
+        const c2 = String((r || [])[cCode2] || '').trim().toUpperCase()
+        const keys = [
+          /^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/.test(vn) ? vn : null,
+          /^[VK]\d{1,4}$/.test(c2) ? c2 : null,
+        ].filter((k): k is string => k != null)
+        if (!keys.length) continue
+        const sourcing = String(r[cMsStat] || '').trim() === '진행중' && /리드|소싱/.test(String(r[cFunnel] || ''))
+        for (const k of keys) msSourcingByCode[k] = msSourcingByCode[k] || sourcing
       }
     } else if (toSheet.length) {
       raw.warnings.push('KTC Ops Matching Status 헤더(VN Code)를 찾지 못해 TO 는 JD 원장 Headcount 로 폴백')
@@ -1179,6 +1200,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         lastAppDate: all.lastApp ? String(all.lastApp).slice(0, 10) : null,
         dropped, responded: !!toRow?.responded,
         cvSharedAt: cvSharedByCode[code.toUpperCase()] || null,
+        msSourcing: msSourcingByCode[code.toUpperCase()] ?? null,
         startDate, days, peopleAll: all.people, appsAll: all.apps,
         curInternal, curNew, curPassed, curReady, curCompany, curInterview, curOffer, health,
       }

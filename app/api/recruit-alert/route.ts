@@ -1,7 +1,10 @@
 // 지원 미달·발송 지연 알림 — Vercel Cron 이 매일 09:00 KST(= 베트남 07:00)에 호출.
 // 하루 1회 stateless 다이제스트, 종류별 별도 메시지 2건 (합치지 말 것 — 피드백):
-//   🚨 발송 지연  — 스크리닝 합격자가 5명+ 대기 중인데 기업 발송 기록이 없음 (공이 매칭 스쿼드에 있음).
-//                  기준은 지원 건수가 아니라 "보낼 수 있는 합격자"(현재 passed+ready_to_forward) —
+//   🚨 발송 지연  — ① Matching Status(매칭 원장) Funnel 이 소싱 단계("1. 리드 발생"/"2. 인재 소싱 중",
+//                  상태 진행중)에 머물러 있고 ② 스크리닝 합격자가 5명+ 대기 중이며 ③ 발송 기록이 없는
+//                  공고만 (사용자 지시 09-09: "소싱중에 머물러 있는 기업 중 발송 안 된 건에 한하여만" —
+//                  Funnel 이 3.인터뷰 대상 심사 이후로 넘어가면 발송된 것이니 독촉 금지).
+//                  합격자 기준은 "보낼 수 있는 합격자"(현재 passed+ready_to_forward) —
 //                  지원 10건 기준 1차안은 "너무 난잡하다" 피드백으로 교체(09-09).
 //                  형식은 사용자 지정: 헤더 + `[코드] 회사 - 합격 N명` 한 줄씩, 멘션·게이지·버튼 없음.
 //   🚨 지원 미달  — D+3 이상인데 지원 < TO×10 (공이 인재/소싱 스쿼드에 있음). 기존 3줄 게이지 형식.
@@ -93,9 +96,13 @@ export async function GET(req: NextRequest) {
       if (j.appsAll < target && j.days >= FROM_DAY) forwarded.push(j)
       continue
     }
-    // 보낼 수 있는 합격자(현재 passed + ready_to_forward)가 문턱 이상이면 발송 독촉 — D+ 무관 즉시
+    // 매칭 원장(Matching Status) Funnel 이 발송 후 단계(3.인터뷰 대상 심사~)·드랍·완료면 독촉 전부 제외 —
+    // 앱에 발송 기록이 없어도 원장이 "발송됨/종료"라고 하면 그게 운영의 진실 (사용자 지시 09-09)
+    if (j.msSourcing === false) continue
+    // 보낼 수 있는 합격자(현재 passed + ready_to_forward)가 문턱 이상 + 원장 Funnel 이 소싱 단계에
+    // 머물러 있을 때만 발송 독촉 — 원장 미등재(조인 실패 포함, msSourcing=null)는 판정 불가라 안 태운다
     const passed = j.curPassed + j.curReady
-    if (passed >= SHIP_MIN_PASSED) {
+    if (passed >= SHIP_MIN_PASSED && j.msSourcing === true) {
       shipDelay.push({ code: j.code, company: j.company, title: j.title, passed })
       continue
     }
