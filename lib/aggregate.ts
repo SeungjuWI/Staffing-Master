@@ -249,6 +249,7 @@ type CostData = {
 type Raw = {
   warnings: string[]
   candidates: any[]
+  cvShared: any[]        // ktc-support funnel_events(event=cv_shared) — 공고별 기업 발송 기록 (수동 기록 포함)
   applications: any[]
   resumeCount: number
   publicCount: number
@@ -329,6 +330,9 @@ async function fetchRaw(): Promise<Raw> {
   // 모든 원본 로드는 서로 독립적 → promise 를 먼저 전부 띄우고(아래) 한 번에 await 한다.
   // (기존엔 FYI 지원·베트남·비용이 순차 await 라 콜드 fetch 시간이 합산됐다 → 이제 임계경로 = 가장 느린 1개)
   const pCandidates = grab('파이프라인(candidates)', () => fetchAll<any>(ktc, 'candidates', 'full_name, sheet_source, email, applied_job, applied_date, pipeline_status'), [])
+  // 기업 발송 기록 — ktc-ops 발송기 웹훅뿐 아니라 ktc-support 관리화면에서 수동 기록한 발송도 포함.
+  // 후보 상태(sent_to_company)는 이름 매칭 실패나 수동 퍼널 기록 시 빠질 수 있어 이 원장이 더 완전하다.
+  const pCvShared = grab('발송 기록(funnel_events)', () => fetchAll<any>(ktc, 'funnel_events', 'jd_code, event_date', q => q.eq('event', 'cv_shared')), [])
   // 지원 건 = CANDIDATE DATA 시트 직접 (원본). 기존엔 salarymap ktc_applications(재적재본)를
   // 읽었는데, 동기화 크론이 죽자 5일치 지원이 조용히 빠졌다(2026-07-27, GB3001 시트 9 vs DB 6).
   // 시트가 진실의 원천이므로 직접 읽고, 크레덴셜 없거나 시트 읽기 실패 시에만 재적재본 폴백.
@@ -638,8 +642,8 @@ async function fetchRaw(): Promise<Raw> {
   const pLinks = grab('시트 탭 링크', () => fetchSheetLinks(sheets), {} as Record<string, string>)
 
   // 위에서 띄운 promise 를 전부 한 번에 대기 (콜드 fetch = 가장 느린 1개 시간)
-  const [candidates, applications, resumeCount, publicCount, master, ops, fyiWrap, vn, cost, sheetLinks] =
-    await Promise.all([pCandidates, pApplications, pResume, pPublic, pMaster, pOps, pFyiApps, pVn, pCost, pLinks])
+  const [candidates, cvShared, applications, resumeCount, publicCount, master, ops, fyiWrap, vn, cost, sheetLinks] =
+    await Promise.all([pCandidates, pCvShared, pApplications, pResume, pPublic, pMaster, pOps, pFyiApps, pVn, pCost, pLinks])
   const [jdSheet] = master
   const [empSheet, revSheet, toSheet] = ops
   const { fyiApps, fyiJobById } = fyiWrap
@@ -660,7 +664,7 @@ async function fetchRaw(): Promise<Raw> {
     }
   }
 
-  return { warnings, candidates, applications, resumeCount, publicCount, jdSheet, empSheet, revSheet, toSheet, fyiApps, fyiJobById, vnJobs, vnApps, cost, sheetLinks, fetchedAt: Date.now() }
+  return { warnings, candidates, cvShared, applications, resumeCount, publicCount, jdSheet, empSheet, revSheet, toSheet, fyiApps, fyiJobById, vnJobs, vnApps, cost, sheetLinks, fetchedAt: Date.now() }
 }
 
 type ChanAcc = {
@@ -1098,6 +1102,17 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     }
   }
 
+  // ── 공고별 첫 기업 발송일 — ktc-support funnel_events(cv_shared) ──
+  // jd_code 는 ktc-support 관리코드(V43·R107…)로 JD 원장 코드와 같은 체계 — 대문자 정규화로 붙는다.
+  // 후보 상태 기반 delivered 와 달리 관리화면 수동 기록도 잡히므로 발송 여부 판정은 이쪽이 더 완전.
+  const cvSharedByCode: Record<string, string> = {}
+  for (const ev of raw.cvShared) {
+    const evCode = String(ev.jd_code || '').trim().toUpperCase()
+    const evDate = String(ev.event_date || '').slice(0, 10)
+    if (!evCode || !evDate) continue
+    if (!cvSharedByCode[evCode] || evDate < cvSharedByCode[evCode]) cvSharedByCode[evCode] = evDate
+  }
+
   // ── 공고 원장 → JdRow (헤더 해석은 위 공고 귀속 리졸버 직전에서 완료) ──
   const jds: JdRow[] = jdDataRows
     .filter((r: any[]) => String(r[JC.code] || '').trim())
@@ -1163,6 +1178,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         channels: Object.entries(agg.chan).map(([k, n]) => ({ key: k, apps: n })).sort((a, b) => b.apps - a.apps),
         lastAppDate: all.lastApp ? String(all.lastApp).slice(0, 10) : null,
         dropped, responded: !!toRow?.responded,
+        cvSharedAt: cvSharedByCode[code.toUpperCase()] || null,
         startDate, days, peopleAll: all.people, appsAll: all.apps,
         curInternal, curNew, curPassed, curReady, curCompany, curInterview, curOffer, health,
       }
