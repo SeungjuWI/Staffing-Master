@@ -1065,7 +1065,9 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // 열은 헤더 이름으로 해석 (이 시트들은 컬럼이 자주 이동한다 — 인덱스 하드코딩 금지).
   // 헤더 셀에 줄바꿈이 섞여 있어(`Total⏎TO`, `VN⏎Code`) 공백으로 정규화해 찾는다.
   const toByCode: Record<string, { to: number; filled: number; dropped: number; responded: boolean }> = {}
-  const msSourcingByCode: Record<string, boolean> = {} // true=진행중·소싱 단계 / false=발송 후·드랍·완료 / 키 없음=원장 미등재
+  // Matching Status 조인 결과 — opsCode(관리코드, 조직 표준 표시용) + sourcing(진행중·소싱 단계 여부)
+  const msByLedgerCode: Record<string, { opsCode: string; sourcing: boolean }> = {} // 키 = 원장 코드 (VN Code·V/K)
+  const msByTitle: Record<string, { opsCode: string; sourcing: boolean; n: number }> = {} // 키 = 정규화 제목, n>1 = 모호
   {
     const norm = (c: any) => String(c || '').replace(/\n/g, ' ').trim()
     const hIdx = toSheet.findIndex((r: any[]) => (r || []).some((c: any) => /vn\s*code/i.test(norm(c))))
@@ -1099,24 +1101,40 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         if (String(r[cIv] || '').trim() || String(r[cM1] || '').trim()) b.responded = true
       }
 
-      // ── Funnel 단계 (발송 전/후 판정, 2026-09-09) — recruit-alert 발송 지연이 원장 기준으로 판정 ──
-      // 값: "1. 리드 발생"/"2. 인재 소싱 중"(=발송 전) · "3. 인터뷰 대상 심사"~"6. 매칭"/"Drop"(=발송 후·종료).
-      // 키는 VN Code 열 + Code 열(V·K 코드만) — Code 열의 R 채번은 JD 원장 R 채번과 서로 달라
-      // (실측: MS R105=바다핀테크 vs 원장 R105=Atop) R 코드 조인은 오매칭이라 금지.
+      // ── Funnel 단계·관리코드 (2026-09-09~10) — recruit-alert 발송 지연 판정 + 표시 코드(조직 표준) ──
+      // Funnel 값: "1. 리드 발생"/"2. 인재 소싱 중"(=발송 전) · "3. 인터뷰 대상 심사"~"6. 매칭"/"Drop"(=발송 후·종료).
+      // 원장 공고와의 조인 2단: ① VN Code 열 + Code 열의 V·K 코드 (정확 키 — Code 열 R 채번은
+      // 원장 R 채번과 서로 달라(실측: MS R105=바다핀테크 vs 원장 R105=Atop) 직접 조인 금지)
+      // ② 아래 제목 유니크 매칭 폴백 (JdRow 조립부) — VN Code 미기입 행(로테아 등)을 받는다.
       // 같은 코드 여러 행(재게시)이면: 진행중 + 소싱 단계 행이 하나라도 있으면 '소싱 중'으로 본다.
       const cFunnel = col(/^funnel$/i, 4)
       const cMsStat = col(/^상태$/, 0)
       const cCode2 = col(/^code$/i, 5)
+      const cPos2 = col(/^position\s*2$/i, 21)
+      const cPos = col(/^position$/i, 20)
+      const alnMs = (s: unknown) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/đ/g, 'd').replace(/[^a-z0-9]/g, '')
       for (const r of toSheet.slice(hIdx + 1)) {
         const vn = String((r || [])[cCode] || '').trim().toUpperCase()
         const c2 = String((r || [])[cCode2] || '').trim().toUpperCase()
-        const keys = [
-          /^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/.test(vn) ? vn : null,
-          /^[VK]\d{1,4}$/.test(c2) ? c2 : null,
-        ].filter((k): k is string => k != null)
-        if (!keys.length) continue
+        const opsCode = /^[RVK]\d{1,4}$/.test(c2) ? c2 : /^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/.test(vn) ? vn : null
+        if (!opsCode) continue
         const sourcing = String(r[cMsStat] || '').trim() === '진행중' && /리드|소싱/.test(String(r[cFunnel] || ''))
-        for (const k of keys) msSourcingByCode[k] = msSourcingByCode[k] || sourcing
+        const entry = { opsCode, sourcing }
+        const merge = (map: Record<string, { opsCode: string; sourcing: boolean }>, k: string) => {
+          const prev = map[k]
+          map[k] = prev ? { opsCode: prev.opsCode, sourcing: prev.sourcing || sourcing } : entry
+        }
+        // ① 정확 키 — VN Code(원장 코드) + Code 열 V·K
+        if (/^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/.test(vn)) merge(msByLedgerCode, vn)
+        if (/^[VK]\d{1,4}$/.test(c2)) merge(msByLedgerCode, c2)
+        // ② 제목 인덱스 (Position 2 = 실제 공고 제목) — 유니크할 때만 폴백으로 쓴다
+        const t = alnMs(String(r[cPos2] || '').trim() || String(r[cPos] || '').trim())
+        if (t.length >= 6) {
+          const prev = msByTitle[t]
+          if (!prev) msByTitle[t] = { opsCode, sourcing, n: 1 }
+          else if (prev.opsCode === opsCode) prev.sourcing = prev.sourcing || sourcing // 재게시 동일 코드
+          else prev.n++ // 다른 코드가 같은 제목 — 모호 → 폴백 기각
+        }
       }
     } else if (toSheet.length) {
       raw.warnings.push('KTC Ops Matching Status 헤더(VN Code)를 찾지 못해 TO 는 JD 원장 Headcount 로 폴백')
@@ -1132,6 +1150,14 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     const evDate = String(ev.event_date || '').slice(0, 10)
     if (!evCode || !evDate) continue
     if (!cvSharedByCode[evCode] || evDate < cvSharedByCode[evCode]) cvSharedByCode[evCode] = evDate
+  }
+
+  // 원장 쪽 제목 중복 카운트 — MS 제목 폴백 조인은 양쪽 모두 유일할 때만 (동제목 공고 오귀속 방지)
+  const ledgerTitleN: Record<string, number> = {}
+  for (const r of jdDataRows) {
+    if (!String(r[JC.code] || '').trim()) continue
+    const t = aln(String(r[JC.title] || '').trim())
+    if (t.length >= 6) ledgerTitleN[t] = (ledgerTitleN[t] || 0) + 1
   }
 
   // ── 공고 원장 → JdRow (헤더 해석은 위 공고 귀속 리졸버 직전에서 완료) ──
@@ -1184,6 +1210,12 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
 
       const title = String(r[JC.title] || '').trim()
       const yoeRaw = String(r[JC.yoe] || '').trim()
+      // MS 조인: ① 원장 코드 정확 키 ② 제목 유니크 폴백 (양쪽 유일할 때만 — VN Code 미기입 행 대응)
+      const msJoin = msByLedgerCode[code.toUpperCase()] ?? (() => {
+        const t = aln(title)
+        const hit = t.length >= 6 ? msByTitle[t] : undefined
+        return hit && hit.n === 1 && ledgerTitleN[t] === 1 ? { opsCode: hit.opsCode, sourcing: hit.sourcing } : null
+      })()
       return {
         code,
         company: String(r[JC.company] || '').trim(),
@@ -1200,7 +1232,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         lastAppDate: all.lastApp ? String(all.lastApp).slice(0, 10) : null,
         dropped, responded: !!toRow?.responded,
         cvSharedAt: cvSharedByCode[code.toUpperCase()] || null,
-        msSourcing: msSourcingByCode[code.toUpperCase()] ?? null,
+        msSourcing: msJoin ? msJoin.sourcing : null,
+        opsCode: msJoin ? msJoin.opsCode : null,
         startDate, days, peopleAll: all.people, appsAll: all.apps,
         curInternal, curNew, curPassed, curReady, curCompany, curInterview, curOffer, health,
       }
@@ -1347,7 +1380,7 @@ const getCachedByPeriod = unstable_cache(
   },
   // v15·v21·v22 는 별도 세션(점검 탭 / feat/audit-check-tab 브랜치)이 선점해 건너뜀 —
   // Data Cache 는 배포로 안 비워지므로 같은 키를 쓰면 MasterData 모양이 다른 옛 스냅숏이 되돌아온다
-  ['staffing-master-data-v26'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기 (v26: 공고 직군·연차)
+  ['staffing-master-data-v27'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기 (v27: MS 관리코드·발송신호·Funnel 조인)
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 

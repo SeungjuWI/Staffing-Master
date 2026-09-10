@@ -103,12 +103,13 @@ export async function GET(req: NextRequest) {
     // 머물러 있을 때만 발송 독촉 — 원장 미등재(조인 실패 포함, msSourcing=null)는 판정 불가라 안 태운다
     const passed = j.curPassed + j.curReady
     if (passed >= SHIP_MIN_PASSED && j.msSourcing === true) {
-      shipDelay.push({ code: j.code, company: j.company, title: j.title, passed })
+      // 표시 코드 = KTC Ops 관리코드(조직 표준) 우선 — 팀·타 시스템이 쓰는 코드와 일치시킨다
+      shipDelay.push({ code: j.opsCode ?? j.code, company: j.company, title: j.title, passed })
       continue
     }
     if (j.days < FROM_DAY || j.appsAll >= target) continue
     flagged.push({
-      code: j.code, company: j.company, title: j.title,
+      code: j.opsCode ?? j.code, company: j.company, title: j.title,
       days: j.days, apps: j.appsAll, target, to,
       toMissing: j.headcount == null,
       low: j.health === 'low',
@@ -169,14 +170,14 @@ export async function GET(req: NextRequest) {
       ...(noDate.length
         ? [divider, {
             type: 'section',
-            text: { type: 'mrkdwn', text: `❓ *모집 시작일 미상 · Chưa rõ ngày bắt đầu (${noDate.length})* — 원장 Date Received 기입 필요 / Cần điền Date Received\n${noDate.map(j => `*${j.code}* ${j.company} · 지원 ${j.appsAll}`).join('\n')}` },
+            text: { type: 'mrkdwn', text: `❓ *모집 시작일 미상 · Chưa rõ ngày bắt đầu (${noDate.length})* — 원장 Date Received 기입 필요 / Cần điền Date Received\n${noDate.map(j => `*${j.opsCode ?? j.code}* ${j.company} · 지원 ${j.appsAll}`).join('\n')}` },
           }]
         : []),
       // 지원 미달이어도 기업 발송이 나간 공고는 소싱 독촉이 무의미 → 카운트에서 빼고 한 줄만 남김
       ...(forwarded.length
         ? [divider, {
             type: 'context',
-            elements: [{ type: 'mrkdwn', text: `📮 기업 발송 완료로 제외 · Đã gửi cho công ty nên bỏ qua (${forwarded.length}) — ${forwarded.map(j => `${j.code} ${j.company}`).join(' · ').slice(0, 2800)}` }],
+            elements: [{ type: 'mrkdwn', text: `📮 기업 발송 완료로 제외 · Đã gửi cho công ty nên bỏ qua (${forwarded.length}) — ${forwarded.map(j => `${j.opsCode ?? j.code} ${j.company}`).join(' · ').slice(0, 2800)}` }],
           }]
         : []),
       divider,

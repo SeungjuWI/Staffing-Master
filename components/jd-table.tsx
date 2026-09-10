@@ -390,7 +390,9 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
             </thead>
             <tbody>
               {shown.map((j, idx) => {
-                const full = `${j.company} ${j.code}${j.title ? ` · ${j.title}` : ''}`
+                // 표시 코드 = KTC Ops 관리코드(조직 표준) 우선, 조인 안 되면 원장 코드 — 선택·확장 키는 원장 코드 유지
+                const dispCode = j.opsCode ?? j.code
+                const full = `${j.company} ${dispCode}${j.title ? ` · ${j.title}` : ''}`
                 const view = jdView(j)
                 // 완료·순항은 툴팁 없음 (숫자 열이 이미 설명) — 문제/유예 공고만 호버로 판정 이유 노출
                 const note = open && view && view !== 'good' && view !== 'done' ? healthNote(i, j) : null
@@ -429,7 +431,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                           <i className={`jdot ${view}`} title={`${i.t(HEALTH_META[view].label)} — ${i.t(HEALTH_META[view].desc)}`} />
                         )}
                         <span className="tname">{j.company}</span>{' '}
-                        <span className="tsub">{j.code}{j.title ? ` · ${j.title}` : ''}</span>
+                        <span className="tsub">{dispCode}{j.title ? ` · ${j.title}` : ''}</span>
                       </div>
                       {note && j.health && (
                         <span className="tip" role="tooltip">
