@@ -13,7 +13,7 @@
 | 개요 | 입사(North Star)·재직·매출·채용단가·인재풀·오픈 공고 | 종합 |
 | 매칭 퍼널 | 지원자 → 스크리닝 합격 → 기업 전달 → 면접 → 오퍼 → 입사 (+ 현재 단계별 진행 인원) | ktc-support DB (라이브) |
 | 인재 유입 채널 | 채널별 지원자/지원 건/스크리닝/면접/입사/지출/CPA/채용당 비용 | ktc-support DB + salarymap DB + 비용 시트 |
-| 공고 현황 | 공고별 파이프라인 + TO 대비 충원율 | Master 시트 JD EXECUTION + ktc-support DB |
+| 공고 현황 | 공고별 파이프라인 + TO 대비 충원율 (+ 전달 원장 대조) | Master 시트 JD EXECUTION + ktc-support DB + Qualified Candidates 시트 |
 | 기업별 성과 | 기업별 입사·재직·매출·이익 | KTC Ops 시트 (Employee·매출현황) |
 
 집계 로직은 salarymap `pages/api/admin/ktc-jd-funnel.js` 를 이식했고, 스크리닝 합격
@@ -32,7 +32,11 @@ npm run dev
 
 - `SALARYMAP_SUPABASE_URL` / `SALARYMAP_SUPABASE_SERVICE_ROLE_KEY` — salarymap 의 `NEXT_PUBLIC_SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`
 - `KTC_SUPABASE_URL` / `KTC_SUPABASE_SERVICE_ROLE_KEY` — salarymap 의 동일 변수
-- `GOOGLE_SERVICE_ACCOUNT_EMAIL` / `GOOGLE_PRIVATE_KEY` — salarymap 의 동일 변수
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL` / `GOOGLE_PRIVATE_KEY` — salarymap 의 동일 변수.
+  읽는 스프레드시트 5개(Master·KTC Ops·비용·CANDIDATE DATA·Qualified Candidates)에 이 계정이
+  **뷰어 이상**으로 들어가 있어야 한다 (스코프는 `spreadsheets.readonly`). 빠진 시트는 해당 지표만
+  제외되고 상단 경고 배너에 표시된다.
+- `QUALIFIED_SHEET_ID` — 전달 원장 (기본값: `KTC 2026 — Qualified Candidates`). 다른 문서로 옮기면 지정
 - `DASHBOARD_PASSWORD` — 대시보드 잠금 (배포 시 필수; 미설정이면 잠금 없음)
 
 ## 배포 (Vercel)

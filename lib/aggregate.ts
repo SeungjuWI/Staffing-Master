@@ -28,6 +28,8 @@ const COST_SHEET_ID = process.env.COST_SHEET_ID || '1PEWHeAtx5nfxODQr_Db1soh-scl
 const KTC_OPS_SHEET_ID = process.env.KTC_OPS_SHEET_ID || '1opr9KoR7KRZ31CJDNGM63xbA2rPZjPuNaG6eeLPTXjM'
 // 지원자 원본 시트 (채널별 탭) — 지원 건은 여기가 진실의 원천
 const CANDIDATE_SHEET_ID = process.env.CANDIDATE_DATA_SHEET_ID || '13pvv1vQ8PklkIjOfuILD5sbKZJu0CRkiaXRXxUTOp88'
+// 기업 전달 원장 (스크리닝팀이 직접 기입) — 공고 단위 'sent to company' 인원은 여기가 가장 완전하다
+const QUALIFIED_SHEET_ID = process.env.QUALIFIED_SHEET_ID || '1jkHaMY6CM4b-Y_VQlqwULVujqdFPsAhISRVl2TSqfNo'
 
 const CODE_RE = /(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})/g
 
@@ -211,6 +213,40 @@ function parseAppSheet(tab: string, rows: any[][]): any[] {
   return out
 }
 
+// ── Qualified Candidates 시트 파싱 (공고별 기업 전달 인원) ────
+// 스크리닝팀이 손으로 기입하는 전달 원장. 탭마다 아래 블록이 반복된다:
+//   A열 `R194 - Web Developer`          ← 섹션 헤더 = 공고 1건 (Matching Status 의 `Code (JD)` 체계)
+//   기업명 | 이름 | … | Date updated | Status | …   ← 표 헤더 (열 순서가 탭마다 조금씩 다르다)
+//   ...후보 1행 = 1명
+// 탭 이름·열 위치에 기대지 않고 두 신호(섹션 코드 행 / 기업명+Status 헤더 행)만으로 훑는다 —
+// 요약 탭·폰인터뷰 일정 탭처럼 이 조합이 없는 탭은 자연히 걸러진다.
+// 'Date updated' 는 `15/9` 처럼 연도 없는 표기가 섞여 있어 날짜는 읽지 않는다 (발송일은 cvSharedAt 이 정본).
+const QUAL_SECTION_RE = /^([RVK]\d{1,4})\b/
+const QUAL_STATUSES = new Set(['sent to company', 'ready to forward', 'company interviewed', 'passed', 'offer', 'fail', 'rejected'])
+type QualAcc = { sent: number; records: number }
+
+function parseQualSheet(rows: any[][], out: Record<string, QualAcc>) {
+  let code: string | null = null // 직전 섹션 헤더의 공고코드
+  let si = -1                    // 직전 표 헤더의 Status 열
+  for (const r of rows) {
+    const cells = (r || []).map((c: any) => String(c ?? '').replace(/\n/g, ' ').trim())
+    if (!cells.length) continue
+    const sec = QUAL_SECTION_RE.exec(cells[0])
+    if (sec) { code = sec[1].toUpperCase(); continue }
+    // 표 헤더 — 같은 탭 안에서도 열 순서가 바뀌므로 블록마다 다시 잡는다
+    if (cells.includes('기업명') && cells.some(c => /^status$/i.test(c))) {
+      si = cells.findIndex(c => /^status$/i.test(c))
+      continue
+    }
+    if (!code || si < 0 || si >= cells.length) continue
+    const st = cells[si].toLowerCase()
+    if (!QUAL_STATUSES.has(st)) continue // 빈칸·메모·병합 잔여 행
+    const acc = out[code] || (out[code] = { sent: 0, records: 0 })
+    acc.records++
+    if (st === 'sent to company') acc.sent++
+  }
+}
+
 async function fetchAll<T>(sb: SupabaseClient, table: string, select: string, tweak?: (q: any) => any): Promise<T[]> {
   let all: T[] = []
   for (let offset = 0; ; offset += 1000) {
@@ -250,6 +286,7 @@ type Raw = {
   warnings: string[]
   candidates: any[]
   cvShared: any[]        // ktc-support funnel_events(event=cv_shared) — 공고별 기업 발송 기록 (수동 기록 포함)
+  qualSent: Record<string, QualAcc> // Qualified Candidates 시트 → 공고코드(Code (JD)) 별 전달 인원·기록 수
   applications: any[]
   resumeCount: number
   publicCount: number
@@ -272,6 +309,7 @@ type Raw = {
 const SHEET_IDS: [string, string][] = [
   ['master', MASTER_SHEET_ID], ['ops', KTC_OPS_SHEET_ID],
   ['cost', COST_SHEET_ID], ['cand', CANDIDATE_SHEET_ID],
+  ['qual', QUALIFIED_SHEET_ID],
 ]
 async function fetchSheetLinks(sheets: any): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
@@ -351,6 +389,18 @@ async function fetchRaw(): Promise<Raw> {
     }
     return fetchAll<any>(fyi, 'ktc_applications', 'sheet_source, job_code, applied_at, email')
   }, [])
+  // 공고별 기업 전달 인원 — Qualified Candidates 시트 (사람이 직접 기입).
+  // 후보 상태(sent_to_company)·funnel_events 와 달리 스크리닝팀이 전달할 때마다 직접 남기는 원장이라
+  // 가장 완전하다. 크레덴셜 없거나 읽기 실패 시 빈 맵 → 기존 두 신호로만 판정 (지표는 안 깨진다).
+  const pQual = grab('전달 원장(Qualified Candidates 시트)', async () => {
+    const out: Record<string, QualAcc> = {}
+    if (!sheets) return out
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: QUALIFIED_SHEET_ID, fields: 'sheets.properties(title)' })
+    const tabs: string[] = (meta.data.sheets || []).map((s: any) => s.properties?.title || '').filter(Boolean)
+    const values = await batchGet(QUALIFIED_SHEET_ID, tabs.map(t => `'${t}'!A1:Z`))
+    for (const v of values) parseQualSheet(v || [], out)
+    return out
+  }, {} as Record<string, QualAcc>)
   const pResume = grab('인재풀(이력서)', async () => {
     const { count, error } = await fyi.from('user_profiles').select('id', { count: 'exact', head: true }).not('resume_url', 'is', null)
     if (error) throw new Error(error.message)
@@ -642,8 +692,8 @@ async function fetchRaw(): Promise<Raw> {
   const pLinks = grab('시트 탭 링크', () => fetchSheetLinks(sheets), {} as Record<string, string>)
 
   // 위에서 띄운 promise 를 전부 한 번에 대기 (콜드 fetch = 가장 느린 1개 시간)
-  const [candidates, cvShared, applications, resumeCount, publicCount, master, ops, fyiWrap, vn, cost, sheetLinks] =
-    await Promise.all([pCandidates, pCvShared, pApplications, pResume, pPublic, pMaster, pOps, pFyiApps, pVn, pCost, pLinks])
+  const [candidates, cvShared, applications, resumeCount, publicCount, master, ops, fyiWrap, vn, cost, sheetLinks, qualSent] =
+    await Promise.all([pCandidates, pCvShared, pApplications, pResume, pPublic, pMaster, pOps, pFyiApps, pVn, pCost, pLinks, pQual])
   const [jdSheet] = master
   const [empSheet, revSheet, toSheet] = ops
   const { fyiApps, fyiJobById } = fyiWrap
@@ -664,7 +714,7 @@ async function fetchRaw(): Promise<Raw> {
     }
   }
 
-  return { warnings, candidates, cvShared, applications, resumeCount, publicCount, jdSheet, empSheet, revSheet, toSheet, fyiApps, fyiJobById, vnJobs, vnApps, cost, sheetLinks, fetchedAt: Date.now() }
+  return { warnings, candidates, cvShared, qualSent, applications, resumeCount, publicCount, jdSheet, empSheet, revSheet, toSheet, fyiApps, fyiJobById, vnJobs, vnApps, cost, sheetLinks, fetchedAt: Date.now() }
 }
 
 type ChanAcc = {
@@ -1064,6 +1114,10 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   //
   // 열은 헤더 이름으로 해석 (이 시트들은 컬럼이 자주 이동한다 — 인덱스 하드코딩 금지).
   // 헤더 셀에 줄바꿈이 섞여 있어(`Total⏎TO`, `VN⏎Code`) 공백으로 정규화해 찾는다.
+  // 2026-09-16: 코드 열 헤더가 `Code`→`Code (JD)`, `VN Code`→`VN Code (JD)` 로 개칭됐다.
+  // 정확 일치(`^vn code$`)로 찾던 탓에 헤더를 못 잡고 폴백 인덱스(`To N0.` = TO01…)를 공고코드로
+  // 읽어 전 행이 코드 형식 검사에서 탈락 → toByCode 가 비고 TO·충원이 통째로 원장 폴백으로
+  // 떨어져 있었다. 이제 접두만 보고(`^vn code`, `^code`) 괄호 접미는 무시한다.
   const toByCode: Record<string, { to: number; filled: number; dropped: number; responded: boolean }> = {}
   // Matching Status 조인 결과 — opsCode(관리코드, 조직 표준 표시용) + sourcing(진행중·소싱 단계 여부)
   const msByLedgerCode: Record<string, { opsCode: string; sourcing: boolean }> = {} // 키 = 원장 코드 (VN Code·V/K)
@@ -1077,7 +1131,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         const i = H.findIndex((h: any) => re.test(norm(h)))
         return i >= 0 ? i : fallback
       }
-      const cCode = col(/^vn\s*code$/i, 6)
+      const cCode = col(/^vn\s*code\b/i, 7)
       const cTo = col(/^total\s*to$/i, 22)
       const cMatch = col(/^matches$/i, 24)
       const cDrop = col(/^이탈$/, 47)
@@ -1109,7 +1163,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       // 같은 코드 여러 행(재게시)이면: 진행중 + 소싱 단계 행이 하나라도 있으면 '소싱 중'으로 본다.
       const cFunnel = col(/^funnel$/i, 4)
       const cMsStat = col(/^상태$/, 0)
-      const cCode2 = col(/^code$/i, 5)
+      const cCode2 = col(/^code\b/i, 5)
       const cPos2 = col(/^position\s*2$/i, 21)
       const cPos = col(/^position$/i, 20)
       const alnMs = (s: unknown) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/đ/g, 'd').replace(/[^a-z0-9]/g, '')
@@ -1234,6 +1288,12 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         cvSharedAt: cvSharedByCode[code.toUpperCase()] || null,
         msSourcing: msJoin ? msJoin.sourcing : null,
         opsCode: msJoin ? msJoin.opsCode : null,
+        // 전달 원장(시트)은 Code (JD) 로 기입되므로 관리코드로 찾고, 원장 코드가 이미 R/V/K 인
+        // 공고(R107·R143·K20 등)는 원장 코드로도 받는다. 시트에 그 공고 블록이 없으면 null (0 아님).
+        sheetDelivered: (() => {
+          const hit = raw.qualSent[(msJoin?.opsCode || code).toUpperCase()] || raw.qualSent[code.toUpperCase()]
+          return hit ? hit.sent : null
+        })(),
         startDate, days, peopleAll: all.people, appsAll: all.apps,
         curInternal, curNew, curPassed, curReady, curCompany, curInterview, curOffer, health,
       }
@@ -1247,6 +1307,22 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       if (a.open && depth(a) !== depth(b)) return depth(b) - depth(a)
       return b.people - a.people
     })
+
+  // 전달 원장에는 있는데 붙을 공고가 없는 기록 — 대개 Matching Status 의 'VN Code (JD)' 미기입.
+  // 조용히 버리면 "전달 0" 으로 보이니 배너로 드러낸다 (raw.warnings 는 30분 캐시라 여기 별도 배열로 모은다).
+  const buildWarnings: string[] = []
+  {
+    const used = new Set(jds.flatMap(j => [(j.opsCode || j.code).toUpperCase(), j.code.toUpperCase()]))
+    const orphans = Object.entries(raw.qualSent).filter(([k, v]) => v.sent > 0 && !used.has(k))
+    const lost = orphans.reduce((s, [, v]) => s + v.sent, 0)
+    if (lost > 0) {
+      const head = orphans.sort((a, b) => b[1].sent - a[1].sent).slice(0, 5).map(([k, v]) => `${k}(${v.sent})`).join(', ')
+      buildWarnings.push(
+        `Qualified Candidates 시트 전달 기록 ${lost}건이 공고에 귀속되지 않음 — 공고 ${orphans.length}건: ${head}` +
+        `${orphans.length > 5 ? ' 등' : ''}. Matching Status 의 'VN Code (JD)' 를 채우면 붙습니다.`,
+      )
+    }
+  }
 
   const openJds = jds.filter(j => j.open)
   const headcountTotal = openJds.reduce((s, j) => s + (j.headcount || 0), 0)
@@ -1301,7 +1377,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   return {
     generatedAt: new Date(fetchedAt).toISOString(),
     mode: 'live',
-    warnings: raw.warnings,
+    warnings: [...raw.warnings, ...buildWarnings],
     sheetLinks: raw.sheetLinks,
     spendAsOf: raw.cost?.adDayMax ?? null,
     headline: {
