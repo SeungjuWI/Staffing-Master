@@ -181,6 +181,21 @@ function JdDetail({ i, j, open, colSpan }: { i: I18n; j: JdRow; open: boolean; c
             <dd>{stages.length ? stages.map(([l, n]) => `${l} ${i.fmtInt(n as number)}`).join(' · ') : i.t('jdx.noStages')}</dd>
             <dt>{i.t('jdx.cum')}</dt>
             <dd>{rich(i.t('jdx.cumVal', { a: i.fmtInt(j.docPass), b: i.fmtInt(j.delivered), c: i.fmtInt(j.interviews), d: i.fmtInt(j.hiresAll) }))}</dd>
+            {/* 전달 원장(시트) — 사람이 기입하는 누적 원장이라 파이프라인 상태값보다 대개 많다.
+                퍼널·표의 '전달'은 DB 기준 그대로 두고, 차이를 여기서 보이게만 한다 (2026-09-16). */}
+            <dt>{i.t('jdx.sheetSent')}</dt>
+            <dd>
+              {j.sheetDelivered == null ? (
+                <span className="dim">{i.t('jdx.sheetSentNone')}</span>
+              ) : (
+                <>
+                  {rich(i.t('jdx.sheetSentVal', { n: i.fmtInt(j.sheetDelivered) }))}
+                  {j.sheetDelivered > j.delivered && (
+                    <span className="dim">{rich(i.t('jdx.sheetSentGap', { n: i.fmtInt(j.sheetDelivered - j.delivered) }))}</span>
+                  )}
+                </>
+              )}
+            </dd>
             <dt>{i.t('jdx.fill')}</dt>
             <dd>
               {j.headcount != null ? (

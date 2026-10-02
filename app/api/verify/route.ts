@@ -395,6 +395,14 @@ export async function GET() {
     { name: '지원자 = 채널 표 합계', dashboard: f.people, source: chanSumPeople, note: '내부 일관성' },
     { name: '스크리닝 합격 도달', dashboard: f.screened, source: screenReached, note: 'status exact count 합' },
     { name: '기업 전달 도달', dashboard: f.delivered, source: deliveredReached, note: '' },
+    // 전달 원장(Qualified Candidates 시트)은 스크리닝팀이 전달할 때마다 직접 기입하므로 더 완전하다고 본다.
+    // 시트에 전달 기록이 있는데 파이프라인 상태값이 0인 공고 = DB 쪽 누락 신호 (이름 매칭 실패 등).
+    {
+      name: '전달 원장 있는데 파이프라인 전달 0 (공고 수)',
+      dashboard: d.matching.jds.filter(j => (j.sheetDelivered ?? 0) > 0 && j.delivered === 0).length,
+      source: 0,
+      note: '시트 sent to company vs candidates.pipeline_status',
+    },
     // 면접 = 기업 면접(파이프라인 interviewing 이상). 폐지된 자체 폰 인터뷰 시트(INTERVIEW 탭)는
     // 이제 집계에서 빠졌고, 참고용으로 details 에만 남긴다 (2026-07-28 기준 변경)
     {

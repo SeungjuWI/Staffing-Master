@@ -11,9 +11,11 @@
 //     └ 📮 발송 완료 — 지원은 미달이어도 이미 발송된 공고는 독촉 무의미 → 미달 메시지 하단 한 줄로만 표기
 // ("발송 지연"은 2026-09-09 ktc-support slack-nudges 에서 이관 — 거기 candidates DB 는 V코드 공고
 //  귀속이 누락돼 판정 재료가 없고, 문턱 없이 게재만 보면 신규 공고까지 70건대 무더기가 됐다.)
-// 발송 신호 2계통(둘 중 하나면 발송으로 본다):
+// 발송 신호 3계통(하나라도 있으면 발송으로 본다):
 //   ① delivered>0 — ktc-ops CRM2 발송 → ktc-support 웹훅 → 후보 sent_to_company (이름 매칭 실패 시 누락 가능)
 //   ② cvSharedAt — ktc-support funnel_events(cv_shared) 공고 단위 발송 원장 (관리화면 수동 기록 포함)
+//   ③ sheetDelivered>0 — Qualified Candidates 시트(스크리닝팀 직접 기입, 2026-09-16 추가).
+//      ①②가 못 잡는 수동 전달까지 들어온다 — 실측 962건 중 952건이 공고에 귀속됐다.
 // ①만 있고 발송 후보가 전원 rejected 로 바뀌면 delivered 가 0 으로 돌아와 알림에 자동 복귀한다.
 // 필요 env: SLACK_ALERT_WEBHOOK_URL (없으면 SLACK_WEBHOOK_URL 폴백), CRON_SECRET (호출 보호, 권장)
 // ?dry=1 이면 발송 없이 판정 결과·메시지만 JSON 으로 반환 (검증용)
@@ -82,7 +84,7 @@ export async function GET(req: NextRequest) {
   const shipDelay: { code: string; company: string; title: string; passed: number }[] = [] // 합격자 대기 + 미발송 — 발송 독촉
   const noDate: JdRow[] = [] // 모집 시작일 미상 — Date Received 공란 + 지원 0건이라 폴백도 없음
   const forwarded: JdRow[] = [] // 지원은 미달이지만 기업 발송이 이미 나간 공고 — 본문 제외, 하단 표기
-  const isForwarded = (j: JdRow) => j.delivered > 0 || j.cvSharedAt != null
+  const isForwarded = (j: JdRow) => j.delivered > 0 || j.cvSharedAt != null || (j.sheetDelivered ?? 0) > 0
   for (const j of active) {
     const to = j.headcount ?? 1
     const target = to * APPS_PER_TO
@@ -187,7 +189,7 @@ export async function GET(req: NextRequest) {
 
   const summary = { ok: true, total, shipDelay: shipDelay.length, fresh: fresh.length, ongoing: ongoing.length, noDate: noDate.length, forwarded: forwarded.length }
 
-  if (dry) return NextResponse.json({ ...summary, shipPayload, payload, shipDelayJds: shipDelay, flagged, noDate: noDate.map(j => j.code), forwardedJds: forwarded.map(j => ({ code: j.code, company: j.company, delivered: j.delivered, cvSharedAt: j.cvSharedAt, apps: j.appsAll })) })
+  if (dry) return NextResponse.json({ ...summary, shipPayload, payload, shipDelayJds: shipDelay, flagged, noDate: noDate.map(j => j.code), forwardedJds: forwarded.map(j => ({ code: j.code, company: j.company, delivered: j.delivered, cvSharedAt: j.cvSharedAt, sheetDelivered: j.sheetDelivered, apps: j.appsAll })) })
 
   if (total === 0) return NextResponse.json({ ...summary, sent: 0 }) // 지연·미달 0건인 날은 발송 안 함
 
