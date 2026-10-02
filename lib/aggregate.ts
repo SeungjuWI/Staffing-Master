@@ -1065,9 +1065,10 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // 열은 헤더 이름으로 해석 (이 시트들은 컬럼이 자주 이동한다 — 인덱스 하드코딩 금지).
   // 헤더 셀에 줄바꿈이 섞여 있어(`Total⏎TO`, `VN⏎Code`) 공백으로 정규화해 찾는다.
   const toByCode: Record<string, { to: number; filled: number; dropped: number; responded: boolean }> = {}
-  // Matching Status 조인 결과 — opsCode(관리코드, 조직 표준 표시용) + sourcing(진행중·소싱 단계 여부)
-  const msByLedgerCode: Record<string, { opsCode: string; sourcing: boolean }> = {} // 키 = 원장 코드 (VN Code·V/K)
-  const msByTitle: Record<string, { opsCode: string; sourcing: boolean; n: number }> = {} // 키 = 정규화 제목, n>1 = 모호
+  // Matching Status 조인 결과 — opsCode(관리코드) + sourcing(소싱 단계 여부) + msOpen(운영 원장의 진행 여부)
+  // msOpen: true=상태 '진행중' 행 존재 / false=행은 있는데 전부 완료·드랍 / null=상태 빈값(판정 불가→JD 폴백)
+  const msByLedgerCode: Record<string, { opsCode: string; sourcing: boolean; msOpen: boolean | null }> = {} // 키 = 원장 코드
+  const msByTitle: Record<string, { opsCode: string; sourcing: boolean; msOpen: boolean | null; n: number }> = {} // 키 = 정규화 제목, n>1 = 모호
   {
     const norm = (c: any) => String(c || '').replace(/\n/g, ' ').trim()
     const hIdx = toSheet.findIndex((r: any[]) => (r || []).some((c: any) => /vn\s*code/i.test(norm(c))))
@@ -1077,7 +1078,15 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         const i = H.findIndex((h: any) => re.test(norm(h)))
         return i >= 0 ? i : fallback
       }
-      const cCode = col(/^vn\s*code$/i, 6)
+      // 2026-09-14: 운영이 헤더에 "(JD)" 접미를 붙임("VN Code (JD)"/"Code (JD)") — 앵커 정규식이
+      // 빗나가 폴백 인덱스(구 레이아웃)를 읽으면서 TO·충원 조인이 통째로 JD Headcount 폴백으로
+      // 침몰해 있었다. 접미 허용 + 폴백도 현행 열로 갱신.
+      const cCode = col(/^vn\s*code(\s*\(jd\))?$/i, 7)
+      // Code(JD) 열 — 운영 관리코드. R 채번은 원장과 다른 구채번 행이 잔존(실측: MS R107=아이티에스
+      // vs 원장 R107=로테아)하므로 코드 조인은 R을 제외한 긴 접두 코드(YD1903·MNF1202…)와 V·K만 허용.
+      const cCode2 = col(/^code(\s*\(jd\))?$/i, 5)
+      const LEDGER_CODE = /^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/
+      const C2_SAFE = /^(?:[A-Z]{2,6}\d{3,4}|[VK]\d{1,4})$/ // [A-Z]{2,6}는 2글자+라 R107류와 충돌 불가
       const cTo = col(/^total\s*to$/i, 22)
       const cMatch = col(/^matches$/i, 24)
       const cDrop = col(/^이탈$/, 47)
@@ -1090,8 +1099,11 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       for (const r of toSheet.slice(hIdx + 1)) {
         // 공고코드 형태만 인정 — 이 탭에는 합계 행, 테스트 행, 그리고 공고코드가 없는
         // VN 트랙 행(Kocham·LIKELION VN 등)이 섞여 있다. 소문자 코드(smg3101)도 있어 대문자로 맞춘다.
-        const code = String((r || [])[cCode] || '').trim().toUpperCase()
-        if (!/^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/.test(code)) continue
+        // 키는 행당 하나(VN Code 우선, 없으면 Code(JD)의 안전 코드) — 수치 합산이라 이중 계상 금지.
+        const vnKey = String((r || [])[cCode] || '').trim().toUpperCase()
+        const c2Key = String((r || [])[cCode2] || '').trim().toUpperCase()
+        const code = LEDGER_CODE.test(vnKey) ? vnKey : C2_SAFE.test(c2Key) ? c2Key : ''
+        if (!code) continue
         const b = toByCode[code] || (toByCode[code] = { to: 0, filled: 0, dropped: 0, responded: false })
         // 재게시 등으로 같은 코드가 여러 행일 수 있어 합산
         b.to += toNum(r[cTo])
@@ -1101,38 +1113,40 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         if (String(r[cIv] || '').trim() || String(r[cM1] || '').trim()) b.responded = true
       }
 
-      // ── Funnel 단계·관리코드 (2026-09-09~10) — recruit-alert 발송 지연 판정 + 표시 코드(조직 표준) ──
+      // ── Funnel 단계·관리코드 (2026-09-09~10) + 진행/마감 정본 (2026-09-14) ──
       // Funnel 값: "1. 리드 발생"/"2. 인재 소싱 중"(=발송 전) · "3. 인터뷰 대상 심사"~"6. 매칭"/"Drop"(=발송 후·종료).
-      // 원장 공고와의 조인 2단: ① VN Code 열 + Code 열의 V·K 코드 (정확 키 — Code 열 R 채번은
-      // 원장 R 채번과 서로 달라(실측: MS R105=바다핀테크 vs 원장 R105=Atop) 직접 조인 금지)
-      // ② 아래 제목 유니크 매칭 폴백 (JdRow 조립부) — VN Code 미기입 행(로테아 등)을 받는다.
-      // 같은 코드 여러 행(재게시)이면: 진행중 + 소싱 단계 행이 하나라도 있으면 '소싱 중'으로 본다.
+      // 원장 공고와의 조인 2단: ① VN Code(JD) 열 + Code(JD) 열의 안전 코드(긴 접두 코드·V/K — R 채번은
+      // 원장과 다른 구채번 행이 잔존해(실측: MS R107=아이티에스 vs 원장 R107=로테아) 직접 조인 금지)
+      // ② 아래 제목 유니크 매칭 폴백 (JdRow 조립부) — 코드 미기입 행을 받는다.
+      // 같은 코드 여러 행(재게시)이면: 진행중 행이 하나라도 있으면 진행으로 본다.
       const cFunnel = col(/^funnel$/i, 4)
       const cMsStat = col(/^상태$/, 0)
-      const cCode2 = col(/^code$/i, 5)
       const cPos2 = col(/^position\s*2$/i, 21)
       const cPos = col(/^position$/i, 20)
       const alnMs = (s: unknown) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/đ/g, 'd').replace(/[^a-z0-9]/g, '')
       for (const r of toSheet.slice(hIdx + 1)) {
         const vn = String((r || [])[cCode] || '').trim().toUpperCase()
         const c2 = String((r || [])[cCode2] || '').trim().toUpperCase()
-        const opsCode = /^[RVK]\d{1,4}$/.test(c2) ? c2 : /^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/.test(vn) ? vn : null
+        const opsCode = /^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/.test(c2) ? c2 : /^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/.test(vn) ? vn : null
         if (!opsCode) continue
-        const sourcing = String(r[cMsStat] || '').trim() === '진행중' && /리드|소싱/.test(String(r[cFunnel] || ''))
-        const entry = { opsCode, sourcing }
-        const merge = (map: Record<string, { opsCode: string; sourcing: boolean }>, k: string) => {
+        const msStat = String(r[cMsStat] || '').trim()
+        const msOpen: boolean | null = msStat === '진행중' ? true : msStat ? false : null
+        const sourcing = msOpen === true && /리드|소싱/.test(String(r[cFunnel] || ''))
+        const orOpen = (a: boolean | null, b: boolean | null) => (a === true || b === true ? true : a ?? b)
+        const entry = { opsCode, sourcing, msOpen }
+        const merge = (map: Record<string, { opsCode: string; sourcing: boolean; msOpen: boolean | null }>, k: string) => {
           const prev = map[k]
-          map[k] = prev ? { opsCode: prev.opsCode, sourcing: prev.sourcing || sourcing } : entry
+          map[k] = prev ? { opsCode: prev.opsCode, sourcing: prev.sourcing || sourcing, msOpen: orOpen(prev.msOpen, msOpen) } : entry
         }
-        // ① 정확 키 — VN Code(원장 코드) + Code 열 V·K
-        if (/^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/.test(vn)) merge(msByLedgerCode, vn)
-        if (/^[VK]\d{1,4}$/.test(c2)) merge(msByLedgerCode, c2)
+        // ① 정확 키 — VN Code(JD) 전 패턴 + Code(JD)의 안전 코드(R 구채번 제외)
+        if (LEDGER_CODE.test(vn)) merge(msByLedgerCode, vn)
+        if (C2_SAFE.test(c2)) merge(msByLedgerCode, c2)
         // ② 제목 인덱스 (Position 2 = 실제 공고 제목) — 유니크할 때만 폴백으로 쓴다
         const t = alnMs(String(r[cPos2] || '').trim() || String(r[cPos] || '').trim())
         if (t.length >= 6) {
           const prev = msByTitle[t]
-          if (!prev) msByTitle[t] = { opsCode, sourcing, n: 1 }
-          else if (prev.opsCode === opsCode) prev.sourcing = prev.sourcing || sourcing // 재게시 동일 코드
+          if (!prev) msByTitle[t] = { opsCode, sourcing, msOpen, n: 1 }
+          else if (prev.opsCode === opsCode) { prev.sourcing = prev.sourcing || sourcing; prev.msOpen = orOpen(prev.msOpen, msOpen) } // 재게시 동일 코드
           else prev.n++ // 다른 코드가 같은 제목 — 모호 → 폴백 기각
         }
       }
@@ -1167,7 +1181,17 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       const code = String(r[JC.code]).trim()
       const agg = perJd[code] || { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0, chan: {} as Record<string, number> }
       const status = String(r[JC.status] || '').trim()
-      const open = !CLOSED_RE.test(status)
+      const title = String(r[JC.title] || '').trim()
+      // MS 조인: ① 원장 코드 정확 키 ② 제목 유니크 폴백 (양쪽 유일할 때만 — 코드 미기입 행 대응)
+      const msJoin = msByLedgerCode[code.toUpperCase()] ?? (() => {
+        const t = aln(title)
+        const hit = t.length >= 6 ? msByTitle[t] : undefined
+        return hit && hit.n === 1 && ledgerTitleN[t] === 1 ? { opsCode: hit.opsCode, sourcing: hit.sourcing, msOpen: hit.msOpen } : null
+      })()
+      // 진행/마감 정본 = KTC Ops Matching Status 상태 열 (2026-09-14 전환, 유저 지시).
+      // 근거: JD EXECUTION "In Progress" 119건 중 15건이 MS 에선 이미 완료/드랍 (전수 대조 실측)
+      // — Job Status 열은 갱신이 밀린다. MS 에 행이 없거나 상태가 빈값이면 종전대로 JD 폴백.
+      const open = msJoin?.msOpen != null ? msJoin.msOpen : !CLOSED_RE.test(status)
       // TO·충원은 매칭 원장 우선, 원장에 없는 공고만 JD EXECUTION Headcount 폴백.
       // 행 수를 세던 옛 탭과 달리 Total TO 는 숫자 칸이라 빈칸일 수 있다 → 0이면 원장에 없는 것으로 본다
       // (그런 공고는 TO 도 충원도 폴백으로 넘겨, TO 는 있는데 충원만 0으로 남는 어긋남을 막는다).
@@ -1208,14 +1232,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         else health = 'stall' // curCompany>0 이면 기업 응답 없음, 0이면 내부 처리 정체 — 사유는 UI에서 분기
       }
 
-      const title = String(r[JC.title] || '').trim()
       const yoeRaw = String(r[JC.yoe] || '').trim()
-      // MS 조인: ① 원장 코드 정확 키 ② 제목 유니크 폴백 (양쪽 유일할 때만 — VN Code 미기입 행 대응)
-      const msJoin = msByLedgerCode[code.toUpperCase()] ?? (() => {
-        const t = aln(title)
-        const hit = t.length >= 6 ? msByTitle[t] : undefined
-        return hit && hit.n === 1 && ledgerTitleN[t] === 1 ? { opsCode: hit.opsCode, sourcing: hit.sourcing } : null
-      })()
       return {
         code,
         company: String(r[JC.company] || '').trim(),

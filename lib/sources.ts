@@ -66,7 +66,11 @@ const SRC_DEFS = {
     ],
   },
   'jd.status': {
-    lines: [{ k: 'sheet', sys: 'src.sys.masterJd', loc: 'src.jd.status.loc', sheet: 'master', tab: 'JD EXECUTION' }],
+    lines: [
+      { k: 'sheet', sys: 'src.sys.opsMatching', loc: 'src.jd.status.msLoc', sheet: 'ops', tab: 'Matching Status' },
+      { k: 'sheet', sys: 'src.sys.masterJd', loc: 'src.jd.status.loc', sheet: 'master', tab: 'JD EXECUTION' },
+    ],
+    note: 'src.jd.status.note',
   },
   'jd.to': {
     lines: [{ k: 'sheet', sys: 'src.sys.opsMatching', loc: 'src.jd.to.loc', sheet: 'ops', tab: 'Matching Status' }],
