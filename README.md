@@ -13,7 +13,7 @@
 | 개요 | 입사(North Star)·재직·매출·채용단가·인재풀·오픈 공고 | 종합 |
 | 매칭 퍼널 | 지원자 → 스크리닝 합격 → 기업 전달 → 면접 → 오퍼 → 입사 (+ 현재 단계별 진행 인원) | ktc-support DB (라이브) |
 | 인재 유입 채널 | 채널별 지원자/지원 건/스크리닝/면접/입사/지출/CPA/채용당 비용 | ktc-support DB + salarymap DB + 비용 시트 |
-| 공고 현황 | 공고별 파이프라인 + TO 대비 충원율 (+ 전달 원장 대조) | Master 시트 JD EXECUTION + ktc-support DB + Qualified Candidates 시트 |
+| 공고 현황 | 공고별 콜드메일 발송 → 지원 → 파이프라인 + TO 대비 충원율 (+ 전달 원장 대조) | Master 시트 JD EXECUTION + ktc-support DB + salarymap DB (job_recommendations) + Qualified Candidates 시트 |
 | 기업별 성과 | 기업별 입사·재직·매출·이익 | KTC Ops 시트 (Employee·매출현황) |
 
 집계 로직은 salarymap `pages/api/admin/ktc-jd-funnel.js` 를 이식했고, 스크리닝 합격

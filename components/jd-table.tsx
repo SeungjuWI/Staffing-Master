@@ -124,6 +124,15 @@ function ReqChips({ i, j, detail }: { i: I18n; j: JdRow; detail?: boolean }) {
   )
 }
 
+// 콜드메일 열 툴팁 — 발송 통수 → 그중 지원으로 돌아온 건 (응답률). 누적과 기간치가 다르면 누적도 덧붙인다.
+function coldTitle(i: I18n, j: JdRow): string {
+  if (j.coldmails === 0 && j.coldmailsAll === 0) return i.t('title.coldmailNone')
+  const rate = j.coldmails > 0 ? Math.round((j.appsCold / j.coldmails) * 100) : 0
+  return `${i.t('title.coldmail', { n: i.fmtInt(j.coldmails), a: i.fmtInt(j.appsCold), p: rate })}${
+    j.coldmailsAll !== j.coldmails ? i.t('title.coldmailAll', { n: i.fmtInt(j.coldmailsAll) }) : ''
+  }`
+}
+
 // 충원 완료 사유 — TO 대비 몇 명 채웠는지 (초과 채용이면 초과분도 말해준다)
 function doneReason(i: I18n, j: JdRow): string {
   const to = j.headcount ?? 0
@@ -177,6 +186,18 @@ function JdDetail({ i, j, open, colSpan }: { i: I18n; j: JdRow; open: boolean; c
             <dd>{j.startDate ? <>{i.fmtDay(j.startDate)}{j.days != null && <> · <b>D+{i.fmtInt(j.days)}</b></>}</> : i.t('jdx.noStart')}</dd>
             <dt>{i.t('jdx.lastApp')}</dt>
             <dd>{lastDays == null ? '–' : lastDays === 0 ? <b>{i.t('jdx.today')}</b> : <><b>{i.t('jdx.daysAgo', { n: i.fmtInt(lastDays) })}</b> ({i.fmtDay(j.lastAppDate!)})</>}</dd>
+            {/* 콜드메일 — 발송 통수와 그중 지원으로 돌아온 건. 발송 0이면 "안 보냄"으로 말해준다 */}
+            <dt>{i.t('jdx.coldmail')}</dt>
+            <dd>
+              {j.coldmails > 0 ? (
+                <>
+                  {rich(i.t('jdx.coldmailVal', { n: i.fmtInt(j.coldmails), a: i.fmtInt(j.appsCold), p: Math.round((j.appsCold / j.coldmails) * 100) }))}
+                  {j.coldmailsAll !== j.coldmails && <span className="dim">{i.t('title.coldmailAll', { n: i.fmtInt(j.coldmailsAll) })}</span>}
+                </>
+              ) : (
+                <span className="dim">{i.t(j.coldmailsAll > 0 ? 'jdx.coldmailNoneInPeriod' : 'jdx.coldmailNone', { n: i.fmtInt(j.coldmailsAll) })}</span>
+              )}
+            </dd>
             <dt>{i.t('jdx.stages')}</dt>
             <dd>{stages.length ? stages.map(([l, n]) => `${l} ${i.fmtInt(n as number)}`).join(' · ') : i.t('jdx.noStages')}</dd>
             <dt>{i.t('jdx.cum')}</dt>
@@ -241,7 +262,7 @@ function healthNote(i: I18n, j: JdRow): string {
   return ''
 }
 
-type SortKey = 'company' | 'req' | 'received' | 'to' | 'apps' | 'docPass' | 'delivered' | 'interviews' | 'hires' | 'fill'
+type SortKey = 'company' | 'req' | 'received' | 'to' | 'coldmails' | 'apps' | 'docPass' | 'delivered' | 'interviews' | 'hires' | 'fill'
 type Sort = { key: SortKey; dir: 1 | -1 }
 
 // 주차 구분선 (2026-07-29 회의: "주마다 구분선 — D+7, D+14") — 모집 시작순 정렬일 때만 그린다.
@@ -264,6 +285,7 @@ const sortVal = (j: JdRow, key: SortKey): string | number | null => {
     case 'req': return (j.sector === 'nonit' ? 1000 : 0) + yoeRank(j.yoe ?? null)
     case 'received': return j.startDate
     case 'to': return j.headcount
+    case 'coldmails': return j.coldmails
     case 'apps': return j.apps
     case 'docPass': return j.docPass
     case 'delivered': return j.delivered
@@ -395,6 +417,8 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                 <SortTh i={i} label={i.t('th.received')} k="received" sort={sort} onSort={onSort} src="jd.received" srcLeft />
                 {!open && <th>{i.t('th.status')}<SrcTip k="jd.status" /></th>}
                 <SortTh i={i} label={i.t('th.to')} k="to" sort={sort} onSort={onSort} src="jd.to" />
+                {/* 콜드메일 발송 통수 — 지원 앞에 둔다 (대표 요청 2026-10-19: "지원 전에 콜드메일 발송 수도 보고 싶다") */}
+                <SortTh i={i} label={i.t('th.coldmail')} k="coldmails" sort={sort} onSort={onSort} src="jd.coldmail" />
                 <SortTh i={i} label={i.t('th.apps')} k="apps" sort={sort} onSort={onSort} src="jd.apps" />
                 <SortTh i={i} label={i.t('th.pass')} k="docPass" sort={sort} onSort={onSort} src="pipe.docPass" />
                 <SortTh i={i} label={i.t('th.delivered')} k="delivered" sort={sort} onSort={onSort} src="pipe.delivered" />
@@ -418,7 +442,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                   <Fragment key={j.code}>
                   {wkName && (
                     <tr className="wkrow">
-                      <td colSpan={11}>
+                      <td colSpan={12}>
                         {wkName}
                         {wkRange && <span className="dim"> · {wkRange}</span>}
                       </td>
@@ -474,6 +498,11 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                       </td>
                     )}
                     <td>{j.headcount != null ? i.fmtInt(j.headcount) : <span className="dim">–</span>}</td>
+                    {/* 콜드메일 발송 통수 (salarymap job_recommendations). 툴팁에 그중 지원으로 돌아온 건(응답률)을 붙인다 —
+                        발송 수만 보면 "많이 보냈는데 왜 지원이 적나"에 답이 안 된다. 0통이면 흐리게. */}
+                    <td title={coldTitle(i, j)}>
+                      {j.coldmails > 0 ? i.fmtInt(j.coldmails) : <span className="dim">0</span>}
+                    </td>
                     {/* 주 숫자 = 시트(CANDIDATE DATA) 지원 건 + FYI 직접 지원(시트에 없음 — 제목 매칭 귀속).
                         FYI 몫이 있으면 툴팁에 분해해 운영이 시트와 대조할 때 헷갈리지 않게 한다 */}
                     <td
@@ -508,7 +537,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                       />
                     </td>
                   </tr>
-                  {expanded && <JdDetail i={i} j={j} open={open} colSpan={11} />}
+                  {expanded && <JdDetail i={i} j={j} open={open} colSpan={12} />}
                   </Fragment>
                 )
               })}

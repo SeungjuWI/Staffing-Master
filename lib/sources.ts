@@ -76,6 +76,13 @@ const SRC_DEFS = {
     lines: [{ k: 'sheet', sys: 'src.sys.opsMatching', loc: 'src.jd.to.loc', sheet: 'ops', tab: 'Matching Status' }],
     note: 'src.jd.to.note',
   },
+  'jd.coldmail': {
+    lines: [
+      { k: 'db', sys: 'src.sys.dbRecs', loc: 'src.jd.coldmail.loc', url: 'https://salary-fyi.com' },
+      { k: 'db', sys: 'src.sys.dbApps', loc: 'src.jd.coldmail.loc2' },
+    ],
+    note: 'src.jd.coldmail.note',
+  },
   'jd.apps': {
     lines: [
       { k: 'sheet', sys: 'src.sys.candTabs', loc: 'src.jd.apps.loc', sheet: 'cand' },

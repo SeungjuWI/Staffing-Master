@@ -35,6 +35,9 @@ export type JdRow = {
   open: boolean          // 진행 중 여부
   apps: number           // 지원 건 (시트 탭 + FYI 라이브 — FYI 는 공고 제목 유니크 매칭으로 귀속)
   appsFyi: number        // └ 그중 FYI 플랫폼 직접 지원 (시트에 없는 지원 — 툴팁 분해 표기용)
+  appsCold: number       // └ 그중 콜드메일 경유 지원 (job_applications.application_source 가 coldmail·recommend·similar 계열)
+  coldmails: number      // 콜드메일 발송 통수 (salarymap job_recommendations — 인재풀→공고 추천 메일, 기간 코호트 = 발송일)
+  coldmailsAll: number   // 누적 콜드메일 발송 통수 (스톡)
   people: number         // 지원자
   docPass: number        // 스크리닝 합격 도달
   delivered: number      // 기업 전달 도달

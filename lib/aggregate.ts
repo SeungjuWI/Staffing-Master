@@ -9,6 +9,7 @@
 //  - ktc-support Supabase `candidates`      → 파이프라인 퍼널·채널 귀속 (라이브)
 //  - salarymap Supabase `ktc_applications`  → 지원 건 (시트 원본 재적재본)
 //  - salarymap Supabase `jobs`/`job_applications` → FYI(KTC 공고) 지원자 + 베트남 매칭
+//  - salarymap Supabase `job_recommendations`     → 공고별 콜드메일(인재풀 추천 메일) 발송 통수
 //  - salarymap Supabase `user_profiles`     → FYI 인재풀 (이력서 등록/공개)
 //  - Master 시트 `JD EXECUTION` → 공고 원장 (INTERVIEW 탭은 폐지된 자체 인터뷰 기록이라 미사용)
 //  - KTC Ops 시트 `Employee`/`매출현황`      → 입사·재직·매출·이익
@@ -110,6 +111,10 @@ const NO_RESPONSE_DAYS = 42
 const toVNMonth = (iso: string) => new Date(new Date(iso).getTime() + 7 * 3600000).toISOString().slice(0, 7)
 const toVNDay = (iso: string) => new Date(new Date(iso).getTime() + 7 * 3600000).toISOString().slice(0, 10)
 const DAILY_WINDOW = 30 // 일별 채널 추이 창 (오늘 포함 최근 30일)
+
+// 콜드메일 경유 지원 — salarymap job_applications.application_source 값 중 메일 발 유입.
+// 실측(2026-10-19): coldmail_jobs(원클릭 지원 링크) · similar_after_apply(유사공고 추천) · 그 외 direct/salary/cv_success 는 비메일.
+const COLD_SOURCE_RE = /coldmail|recommend|similar/i
 
 // FYI 채널 시대 분리 (2026-07-29 회의) — 분리선 이후 FYI 에는 KTC 공고만 남긴다(가짜 공고 정리).
 // 그 전은 KTC 외 공고 지원이 섞인 혼합 숫자라, 채널 표에서 ~7/27 / 7/28~ 두 행으로 나눠 본다.
@@ -295,6 +300,7 @@ type Raw = {
   revSheet: any[][]
   toSheet: any[][]
   fyiApps: any[]
+  fyiRecs: any[]         // salarymap job_recommendations — KTC 공고별 콜드메일(인재풀 추천 메일) 발송 로그 (job_id, created_at, kind)
   fyiJobById: Record<string, { title: string; company: string; sourceId: string }> // FYI 공고 id → 제목·회사·공고코드(source_id)
   vnJobs: any[]
   vnApps: any[]
@@ -427,14 +433,27 @@ async function fetchRaw(): Promise<Raw> {
     for (const j of jobs) byId[j.id] = { title: String(j.title || ''), company: String(j.company || ''), sourceId: String(j.source_id || '') }
     const ids = jobs.map(j => j.id)
     let apps: any[] = []
+    // 콜드메일 발송 로그 — 인재풀→공고 추천 메일(job_recommendations). 1행 = 1통 (같은 사람·같은 공고 중복 발송 불가).
+    // kind: recommend(담당자 콜드메일) · similar(유사공고 자동추천) · recruiter(어드민 수동). 전부 "콜드메일"로 센다.
+    // 지원·발송을 같은 50개 묶음으로 돌려 요청 수를 맞춘다. 발송 로그 조회 실패는 지원 집계를 깨지 않게 따로 삼킨다.
+    let recs: any[] = []
+    let recsFailed: string | null = null
     for (let i = 0; i < ids.length; i += 50) {
-      apps = apps.concat(await fetchAll<any>(fyi, 'job_applications', 'applicant_email, created_at, job_id', q => q.in('job_id', ids.slice(i, i + 50))))
+      const chunk = ids.slice(i, i + 50)
+      const [a, r] = await Promise.all([
+        fetchAll<any>(fyi, 'job_applications', 'applicant_email, created_at, job_id, application_source', q => q.in('job_id', chunk)),
+        recsFailed ? Promise.resolve([] as any[]) : fetchAll<any>(fyi, 'job_recommendations', 'job_id, created_at, kind', q => q.in('job_id', chunk)).catch((e: any) => { recsFailed = e.message; return [] as any[] }),
+      ])
+      apps = apps.concat(a)
+      recs = recs.concat(r)
     }
+    if (recsFailed) warnings.push(`콜드메일 발송 로그(job_recommendations): ${recsFailed} — 공고 표 '콜드메일' 열 제외`)
     return {
       fyiApps: apps.filter(a => a.applicant_email && !String(a.applicant_email).toLowerCase().endsWith('@likelion.net')),
+      fyiRecs: recsFailed ? [] : recs,
       fyiJobById: byId,
     }
-  }, { fyiApps: [] as any[], fyiJobById: {} as Record<string, { title: string; company: string; sourceId: string }> })
+  }, { fyiApps: [] as any[], fyiRecs: [] as any[], fyiJobById: {} as Record<string, { title: string; company: string; sourceId: string }> })
 
   // 베트남 매칭 트랙 (FYI 자체 공고 — ktc-support 미경유)
   const pVn = grab('베트남 매칭(FYI 자체 공고)', async () => {
@@ -696,7 +715,7 @@ async function fetchRaw(): Promise<Raw> {
     await Promise.all([pCandidates, pCvShared, pApplications, pResume, pPublic, pMaster, pOps, pFyiApps, pVn, pCost, pLinks, pQual])
   const [jdSheet] = master
   const [empSheet, revSheet, toSheet] = ops
-  const { fyiApps, fyiJobById } = fyiWrap
+  const { fyiApps, fyiRecs, fyiJobById } = fyiWrap
   const { vnJobs, vnApps } = vn
 
   // 파이프라인 동기화 지연 감지 — 시트(지원 원본)에는 있는데 candidates 가 못 따라오면
@@ -714,7 +733,7 @@ async function fetchRaw(): Promise<Raw> {
     }
   }
 
-  return { warnings, candidates, cvShared, qualSent, applications, resumeCount, publicCount, jdSheet, empSheet, revSheet, toSheet, fyiApps, fyiJobById, vnJobs, vnApps, cost, sheetLinks, fetchedAt: Date.now() }
+  return { warnings, candidates, cvShared, qualSent, applications, resumeCount, publicCount, jdSheet, empSheet, revSheet, toSheet, fyiApps, fyiRecs, fyiJobById, vnJobs, vnApps, cost, sheetLinks, fetchedAt: Date.now() }
 }
 
 type ChanAcc = {
@@ -725,7 +744,7 @@ type ChanAcc = {
 
 // ── 기간별 집계 (캐시된 원본에서 동기 계산 — 시트 재요청 없음) ──
 function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData {
-  const { candidates, applications, fyiApps, jdSheet, empSheet, revSheet, toSheet } = raw
+  const { candidates, applications, fyiApps, fyiRecs, jdSheet, empSheet, revSheet, toSheet } = raw
 
   // 기간 필터 — "지원일 코호트": 해당 기간에 지원한 인재의 현재 도달 단계.
   // 스톡 지표(입사 누적·재직·매출·인재풀·오픈 공고)와 비용(시간 축 없음)은 항상 누적.
@@ -855,8 +874,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     const c = chan[key] || (chan[key] = { key, people: 0, applications: 0, docPass: 0, interviews: 0, hires: 0, jobsPosted: null, spendFees: null, spendAds: null })
     c[field]++
   }
-  const perJd: Record<string, { people: number; docPass: number; delivered: number; offer: number; hires: number; interviews: number; apps: number; appsFyi: number; chan: Record<string, number> }> = {}
-  const jd = (code: string) => perJd[code] || (perJd[code] = { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0, chan: {} })
+  const perJd: Record<string, { people: number; docPass: number; delivered: number; offer: number; hires: number; interviews: number; apps: number; appsFyi: number; appsCold: number; coldmails: number; chan: Record<string, number> }> = {}
+  const jd = (code: string) => perJd[code] || (perJd[code] = { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0, appsCold: 0, coldmails: 0, chan: {} })
   let screenPass = 0, delivered = 0, interviewPipe = 0, offerReached = 0, finalPassed = 0
 
   for (const c of periodCandidates) {
@@ -991,8 +1010,19 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       const j = jd(code)
       j.apps++
       j.appsFyi++
+      // 콜드메일 경유 지원 — 원클릭 지원(coldmail_jobs) + 유사공고 추천(similar_after_apply) 등 메일 발 유입 전부
+      if (COLD_SOURCE_RE.test(String(a.application_source || ''))) j.appsCold++
       j.chan.FYI = (j.chan.FYI || 0) + 1
     }
+  }
+  // ── 콜드메일 발송 (salarymap job_recommendations) — 공고 귀속은 FYI 지원과 같은 경로(fyiCodeForJob) ──
+  // 기간 코호트는 발송일 기준: "이 기간에 몇 통 보냈나"가 그 기간 '지원' 열 옆에 놓인다. 누적치는 스톡.
+  const coldAll: Record<string, number> = {}
+  for (const r of fyiRecs) {
+    const code = fyiCodeForJob(r.job_id)
+    if (!code) continue
+    coldAll[code] = (coldAll[code] || 0) + 1
+    if (inPeriod(r.created_at)) jd(code).coldmails++
   }
 
   // ── 면접 = 기업 면접 (파이프라인 interviewing 이상) ────────────
@@ -1233,7 +1263,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     .filter((r: any[]) => String(r[JC.code] || '').trim())
     .map((r: any[]) => {
       const code = String(r[JC.code]).trim()
-      const agg = perJd[code] || { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0, chan: {} as Record<string, number> }
+      const agg = perJd[code] || { people: 0, docPass: 0, delivered: 0, offer: 0, hires: 0, interviews: 0, apps: 0, appsFyi: 0, appsCold: 0, coldmails: 0, chan: {} as Record<string, number> }
       const status = String(r[JC.status] || '').trim()
       const title = String(r[JC.title] || '').trim()
       // MS 조인: ① 원장 코드 정확 키 ② 제목 유니크 폴백 (양쪽 유일할 때만 — 코드 미기입 행 대응)
@@ -1297,7 +1327,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         headcount,
         status,
         open,
-        apps: agg.apps, appsFyi: agg.appsFyi, people: agg.people, docPass: agg.docPass,
+        apps: agg.apps, appsFyi: agg.appsFyi, appsCold: agg.appsCold, coldmails: agg.coldmails, coldmailsAll: coldAll[code] || 0,
+        people: agg.people, docPass: agg.docPass,
         delivered: agg.delivered, interviews: agg.interviews, offer: agg.offer, hires: agg.hires, hiresAll,
         channels: Object.entries(agg.chan).map(([k, n]) => ({ key: k, apps: n })).sort((a, b) => b.apps - a.apps),
         lastAppDate: all.lastApp ? String(all.lastApp).slice(0, 10) : null,
@@ -1473,7 +1504,7 @@ const getCachedByPeriod = unstable_cache(
   },
   // v15·v21·v22 는 별도 세션(점검 탭 / feat/audit-check-tab 브랜치)이 선점해 건너뜀 —
   // Data Cache 는 배포로 안 비워지므로 같은 키를 쓰면 MasterData 모양이 다른 옛 스냅숏이 되돌아온다
-  ['staffing-master-data-v27'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기 (v27: MS 관리코드·발송신호·Funnel 조인)
+  ['staffing-master-data-v28'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기 (v28: 공고별 콜드메일 발송·경유 지원)
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 
