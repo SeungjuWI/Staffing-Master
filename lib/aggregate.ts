@@ -1167,10 +1167,12 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       // 침몰해 있었다. 접미 허용 + 폴백도 현행 열로 갱신.
       const cCode = col(/^vn\s*code(\s*\(jd\))?$/i, 7)
       // Code(JD) 열 — 운영 관리코드. R 채번은 원장과 다른 구채번 행이 잔존(실측: MS R107=아이티에스
-      // vs 원장 R107=로테아)하므로 코드 조인은 R을 제외한 긴 접두 코드(YD1903·MNF1202…)와 V·K만 허용.
+      // vs 원장 R107=로테아)하므로 코드 조인은 긴 접두 코드(YD1903·MNF1202…)·V·K, 그리고 R143 이상만 허용.
+      // 2026-10-27 전수 대조: 원장과 어긋난 R은 R107 하나, R143부터는 MS·원장 번호가 전부 같은 공고.
+      // R 공고는 VN Code 를 안 채우므로 이걸 막으면 제목 폴백으로 빠져 동명 구공고(R225 → 모엔 R48 드랍)에 붙는다.
       const cCode2 = col(/^code(\s*\(jd\))?$/i, 5)
       const LEDGER_CODE = /^(?:[A-Z]{2,6}\d{3,4}|[RVK]\d{1,4})$/
-      const C2_SAFE = /^(?:[A-Z]{2,6}\d{3,4}|[VK]\d{1,4})$/ // [A-Z]{2,6}는 2글자+라 R107류와 충돌 불가
+      const C2_SAFE = { test: (s: string) => /^(?:[A-Z]{2,6}\d{3,4}|[VK]\d{1,4})$/.test(s) || (/^R\d{1,4}$/.test(s) && Number(s.slice(1)) >= 143) }
       const cTo = col(/^total\s*to$/i, 22)
       const cMatch = col(/^matches$/i, 24)
       const cDrop = col(/^이탈$/, 47)
@@ -1504,7 +1506,7 @@ const getCachedByPeriod = unstable_cache(
   },
   // v15·v21·v22 는 별도 세션(점검 탭 / feat/audit-check-tab 브랜치)이 선점해 건너뜀 —
   // Data Cache 는 배포로 안 비워지므로 같은 키를 쓰면 MasterData 모양이 다른 옛 스냅숏이 되돌아온다
-  ['staffing-master-data-v28'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기 (v28: 공고별 콜드메일 발송·경유 지원)
+  ['staffing-master-data-v29'], // ← 집계 로직 변경 시 버전 올려 옛 캐시 폐기 (v29: MS Code(JD) R143+ 코드 조인)
   { revalidate: TTL_SECONDS, tags: ['staffing-master-data'] },
 )
 
