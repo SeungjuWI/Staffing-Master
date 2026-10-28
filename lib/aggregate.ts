@@ -798,13 +798,17 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // 앞머리 코드 추출만으로는 683건(13%)이 공고 미귀속 → 공고별 지원 수가 0 으로 깨진다 (2026-07-27 발견).
   // 폴백 순서: ① 앞머리 코드 ② 문자열 어딘가의 코드("• [MT702] …" 류 — 시트에 있는 공고만 인정)
   // ③ JD 시트 제목 정확 일치 (유니크 제목만 — "Full-stack Developer" 처럼 중복 제목은 매칭 금지)
+  //    단, 그 공고 모집 시작일(Date Received) 이전 지원은 제외 — 코드 없는 옛 동명 공고 지원자가
+  //    나중에 올라온 공고에 붙는다 (실사례: 6~7월 "Graphic Designer" 7명이 10월 V271 합격으로 계상, 2026-10-28)
   // ④ 지원 건(ktc_applications)의 이메일 → 단일 공고 코드
   const sheetCodes = new Set<string>()
   const titleToCode: Record<string, string | null> = {}
+  const receivedByCode: Record<string, string | null> = {}
   for (const r of jdDataRows) {
     const code = String(r[JC.code] || '').trim()
     if (!code) continue
     sheetCodes.add(code)
+    receivedByCode[code] = parseReceived(r[JC.received], null, fetchedAt)
     const t = normName(r[JC.title])
     if (t) titleToCode[t] = titleToCode[t] === undefined ? code : null
   }
@@ -820,7 +824,11 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
     const anywhere = (String(c.applied_job || '').match(CODE_RE) || []).find(k => sheetCodes.has(k))
     if (anywhere) return anywhere
     const byTitle = titleToCode[normName(c.applied_job)]
-    if (byTitle) return byTitle
+    if (byTitle) {
+      const rec = receivedByCode[byTitle]
+      const at = parseAppliedAt(c.applied_date, c.sheet_source)
+      if (!rec || !at || toVNDay(at) >= rec) return byTitle
+    }
     const ec = emailToCodes[String(c.email || '').toLowerCase().trim()]
     if (ec && ec.size === 1) {
       const k: string = ec.values().next().value!
