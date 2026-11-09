@@ -322,6 +322,8 @@ function SortTh({
   )
 }
 
+const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase()
+
 export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 'closed' }) {
   const i = useI18n()
   const open = mode === 'open'
@@ -379,8 +381,15 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
       return d !== 0 ? d : tie(a, b)
     })
   }, [jds, sort, open, i.locale])
+  // 검색 — 회사·코드(원장·Ops)·제목 부분 일치. 베트남어 성조·대소문자 무시
+  const [q, setQ] = useState('')
+  const needle = norm(q.trim())
   const filtering = open && only && selected.size > 0
-  const shown = filtering ? rows.filter(j => selected.has(j.code)) : rows
+  const shown = rows.filter(
+    j =>
+      (!filtering || selected.has(j.code)) &&
+      (!needle || norm(`${j.company} ${j.code} ${j.opsCode ?? ''} ${j.title}`).includes(needle))
+  )
   // 다른 열로 정렬하면 주차가 섞여 구분선이 무의미해진다 — 모집 시작순(기본 정렬 포함)일 때만
   const weekSep = open && sort.key === 'received'
 
@@ -388,6 +397,16 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
 
   return (
     <>
+      <div className="jdsearch">
+        <input
+          type="search"
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          placeholder={i.t('search.placeholder')}
+          aria-label={i.t('search.placeholder')}
+        />
+        {needle && <span>{rich(i.t('search.count', { n: i.fmtInt(shown.length) }))}</span>}
+      </div>
       {open && (selected.size > 0 || only) && (
         <div className="seltools" role="toolbar" aria-label={i.t('sel.aria')}>
           <span>{rich(i.t('sel.count', { n: i.fmtInt(selected.size) }))}</span>
@@ -404,8 +423,8 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
           </button>
         </div>
       )}
-      {filtering && shown.length === 0 ? (
-        <EmptyState message={i.t('sel.emptyFiltered')} />
+      {(filtering || needle) && shown.length === 0 ? (
+        <EmptyState message={i.t(needle ? 'search.empty' : 'sel.emptyFiltered')} />
       ) : (
         <div className="tbl-scroll">
           <table>
