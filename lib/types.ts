@@ -50,6 +50,8 @@ export type JdRow = {
   cvSharedAt: string | null // 첫 기업 발송일 (ktc-support funnel_events cv_shared) — 발송기 웹훅 + 수동 기록 포함
   sheetDelivered: number | null // 기업 전달 인원 — Qualified Candidates 시트 Status='sent to company' (관리코드 조인). null = 시트에 그 공고 블록이 없음
   msSourcing: boolean | null // Matching Status Funnel 판정 — true=진행중·소싱 단계(발송 전) / false=발송 후·드랍·완료 / null=원장 미등재(조인 실패 포함)
+  titleKo?: string | null   // KTC Ops Matching Status 'Position 2' (한국어 포지션명) — ko 화면에서 원장 제목 대신 표시
+  companyKo?: string | null // └ 같은 행 'Company' (한국어 기업명)
   opsCode: string | null // KTC Ops Matching Status 관리코드 (조직 표준) — VN Code 정확 키 or 제목 유니크 매칭. 화면·알림은 이 코드 우선 표시
   startDate: string | null // 모집 시작일 (시트 Date Received, 없으면 최초 지원일) YYYY-MM-DD
   days: number | null    // 모집 시작 후 경과 일수

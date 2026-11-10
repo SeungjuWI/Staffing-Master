@@ -388,7 +388,7 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
   const shown = rows.filter(
     j =>
       (!filtering || selected.has(j.code)) &&
-      (!needle || norm(`${j.company} ${j.code} ${j.opsCode ?? ''} ${j.title}`).includes(needle))
+      (!needle || norm(`${j.company} ${j.companyKo ?? ''} ${j.code} ${j.opsCode ?? ''} ${j.title} ${j.titleKo ?? ''}`).includes(needle))
   )
   // 다른 열로 정렬하면 주차가 섞여 구분선이 무의미해진다 — 모집 시작순(기본 정렬 포함)일 때만
   const weekSep = open && sort.key === 'received'
@@ -450,7 +450,11 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
               {shown.map((j, idx) => {
                 // 표시 코드 = KTC Ops 관리코드(조직 표준) 우선, 조인 안 되면 원장 코드 — 선택·확장 키는 원장 코드 유지
                 const dispCode = j.opsCode ?? j.code
-                const full = `${j.company} ${dispCode}${j.title ? ` · ${j.title}` : ''}`
+                // 한국어 화면은 KTC Ops 의 한국어 기업명·포지션명 우선 (원장 제목은 베트남어·영어라 읽기 어렵다) — 원문은 툴팁에 남긴다
+                const ko = i.locale === 'ko'
+                const coName = (ko && j.companyKo) || j.company
+                const tName = (ko && j.titleKo) || j.title
+                const full = `${coName} ${dispCode}${tName ? ` · ${tName}` : ''}${tName !== j.title && j.title ? ` (${j.title})` : ''}`
                 const view = jdView(j)
                 // 완료·순항은 툴팁 없음 (숫자 열이 이미 설명) — 문제/유예 공고만 호버로 판정 이유 노출
                 const note = open && view && view !== 'good' && view !== 'done' ? healthNote(i, j) : null
@@ -488,8 +492,8 @@ export function JdTable({ jds, mode = 'open' }: { jds: JdRow[]; mode?: 'open' | 
                         {open && view && (
                           <i className={`jdot ${view}`} title={`${i.t(HEALTH_META[view].label)} — ${i.t(HEALTH_META[view].desc)}`} />
                         )}
-                        <span className="tname">{j.company}</span>{' '}
-                        <span className="tsub">{dispCode}{j.title ? ` · ${j.title}` : ''}</span>
+                        <span className="tname">{coName}</span>{' '}
+                        <span className="tsub">{dispCode}{tName ? ` · ${tName}` : ''}</span>
                       </div>
                       {note && j.health && (
                         <span className="tip" role="tooltip">

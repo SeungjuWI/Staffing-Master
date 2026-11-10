@@ -1161,6 +1161,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
   // msOpen: true=상태 '진행중' 행 존재 / false=행은 있는데 전부 완료·드랍 / null=상태 빈값(판정 불가→JD 폴백)
   const msByLedgerCode: Record<string, { opsCode: string; sourcing: boolean; msOpen: boolean | null }> = {} // 키 = 원장 코드
   const msByTitle: Record<string, { opsCode: string; sourcing: boolean; msOpen: boolean | null; n: number }> = {} // 키 = 정규화 제목, n>1 = 모호
+  // 관리코드 → 한국어 포지션명·기업명 (Position 2·Company). 같은 코드에 다른 기업이 붙으면(R 구채번 잔존) 모호 → null
+  const msKoByOps: Record<string, { title: string; company: string } | null> = {}
   {
     const norm = (c: any) => String(c || '').replace(/\n/g, ' ').trim()
     const hIdx = toSheet.findIndex((r: any[]) => (r || []).some((c: any) => /vn\s*code/i.test(norm(c))))
@@ -1217,6 +1219,7 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
       const cMsStat = col(/^상태$/, 0)
       const cPos2 = col(/^position\s*2$/i, 21)
       const cPos = col(/^position$/i, 20)
+      const cMsCo = col(/^company$/i, 8)
       const alnMs = (s: unknown) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/đ/g, 'd').replace(/[^a-z0-9]/g, '')
       for (const r of toSheet.slice(hIdx + 1)) {
         const vn = String((r || [])[cCode] || '').trim().toUpperCase()
@@ -1231,6 +1234,13 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         const merge = (map: Record<string, { opsCode: string; sourcing: boolean; msOpen: boolean | null }>, k: string) => {
           const prev = map[k]
           map[k] = prev ? { opsCode: prev.opsCode, sourcing: prev.sourcing || sourcing, msOpen: orOpen(prev.msOpen, msOpen) } : entry
+        }
+        const koTitle = String(r[cPos2] || '').trim(), koCo = String(r[cMsCo] || '').trim()
+        if (koTitle || koCo) {
+          const prev = msKoByOps[opsCode]
+          if (prev === undefined) msKoByOps[opsCode] = { title: koTitle, company: koCo }
+          else if (prev && koCo && prev.company && prev.company !== koCo) msKoByOps[opsCode] = null
+          else if (prev) { prev.title ||= koTitle; prev.company ||= koCo }
         }
         // ① 정확 키 — VN Code(JD) 전 패턴 + Code(JD)의 안전 코드(R 구채번 제외)
         if (LEDGER_CODE.test(vn)) merge(msByLedgerCode, vn)
@@ -1346,6 +1356,8 @@ function computeFromRaw(raw: Raw, period: Period, fetchedAt: number): MasterData
         cvSharedAt: cvSharedByCode[code.toUpperCase()] || null,
         msSourcing: msJoin ? msJoin.sourcing : null,
         opsCode: msJoin ? msJoin.opsCode : null,
+        titleKo: (msJoin && msKoByOps[msJoin.opsCode]?.title) || null,
+        companyKo: (msJoin && msKoByOps[msJoin.opsCode]?.company) || null,
         // 전달 원장(시트)은 Code (JD) 로 기입되므로 관리코드로 찾고, 원장 코드가 이미 R/V/K 인
         // 공고(R107·R143·K20 등)는 원장 코드로도 받는다. 시트에 그 공고 블록이 없으면 null (0 아님).
         sheetDelivered: (() => {
